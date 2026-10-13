@@ -1,0 +1,13 @@
+{
+  "name": "qt-playwright-examples",
+  "private": true,
+  "description": "Example end-to-end test suite for the qt-playwright sample application",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^22.20.0",
+    "qt-playwright": "file:../client"
+  }
+}
