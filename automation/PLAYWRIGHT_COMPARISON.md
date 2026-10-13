@@ -1,112 +1,122 @@
 # qt-playwright compared to Playwright
 
-In short: the part of Playwright you use in everyday UI tests is closely mirrored. That
-part is the test runner integration, locators with auto-waiting and strict mode,
-actions, retrying `expect` assertions, timeouts, screenshots and video. If you know
-Playwright, a qt-playwright test reads the same. The differences come from the target:
-Qt has no DOM, no CSS, no JavaScript in the page and no network layer. Everything
-built on those either has a Qt-specific replacement or is missing.
+In short: qt-playwright covers nearly all of Playwright's API for testing a single
+application. That includes the test runner integration, locators (role, label,
+placeholder, title, test id, text, filters, `and`/`or`), auto-waiting and strict mode,
+actions, retrying assertions (ARIA snapshots and screenshot baselines included),
+`evaluate`, coordinate-level input, dialogs and file choosers, video, tracing and
+codegen. Some features are adapted rather than identical, because Qt has no DOM, no CSS
+and no page JavaScript. What remains missing is tied to browsers: network interception,
+clock control, browser contexts and storage, and Playwright's own trace viewer and UI
+mode.
 
-Legend: ✅ same name and semantics · ≈ same idea, different details · ❌ missing ·
+Legend: ✅ same name and semantics · ≈ same idea, adapted to Qt · ❌ missing ·
 ➕ qt-playwright only.
 
 ## Test runner (`@playwright/test`)
 
 | Playwright | qt-playwright | |
 |---|---|---|
-| `test`, `test.describe`, `test.use`, hooks, projects, parallel workers, retries, reporters | the same, via `import { test } from 'qt-playwright/test'` | ✅ |
-| `page` fixture | `app` fixture (one fresh application per test) | ≈ |
-| `use: { launchOptions }`, `baseURL` | `use: { qtApp: { executable, args, env, slowMo, ... } }` | ≈ |
-| `use: { actionTimeout }` | honored as the default action/assertion timeout | ✅ |
-| `expect.timeout` config | not read; assertions use the action timeout | ≈ |
-| `use: { screenshot: 'only-on-failure' }` | `qtScreenshot` (all windows attached on failure) | ≈ |
-| `use: { video: 'retain-on-failure' }` | the same option is honored; `qtVideo` overrides | ✅ |
-| `use: { trace: 'on' }`, trace viewer, UI mode, `codegen`, inspector | — | ❌ |
-| API calls as report steps | yes (`test.step`, boxed) | ✅ |
+| `test`, `describe`, `use`, hooks, projects, workers, retries, reporters | the same, via `import { test, expect } from 'qt-playwright/test'` | ✅ |
+| `page` fixture | `app` fixture (a fresh application per test) | ≈ |
+| `use: { launchOptions }` | `use: { qtApp: { executable, args, env, slowMo, expectTimeout, ... } }` | ≈ |
+| `use: { actionTimeout }` | honored | ✅ |
+| `expect.timeout` config | `qtApp.expectTimeout` (the config value is not exposed to fixtures) | ≈ |
+| `use: { screenshot }` | `qtScreenshot` (all windows attached on failure) | ≈ |
+| `use: { video }` | honored (`'on'`, `'retain-on-failure'`, `'on-first-retry'`); `qtVideo` overrides | ✅ |
+| `use: { trace }` | honored (all modes); the trace is an HTML viewer instead of `trace.zip` | ≈ |
+| `--update-snapshots`, snapshot dirs | used by `toHaveScreenshot` | ✅ |
+| API calls as report steps | yes, described like Playwright (`getByRole('button', { name: 'OK' }).click`) | ✅ |
 | `expect.soft`, `expect.poll`, `expect.configure`, generic matchers | passed through to Playwright's `expect` | ✅ |
+| UI mode, inspector, `codegen` | `qt-playwright codegen <app>` and `app.pause()`; no UI mode or inspector | ≈ |
 
-## Launching and pages
+## Launching
 
 | Playwright | qt-playwright | |
 |---|---|---|
-| `chromium.launch()` + `browser.newPage()` | `launch(executable, args, options)` returns a `QtApp` | ≈ |
-| `connectOverCDP(url)` / `connect(wsEndpoint)` | `attach('host:port')`; ➕ `attach(pid)` injects into a running process | ≈ |
+| `launch()` + `newPage()` | `launch(executable, args, options)` returns a `QtApp` | ≈ |
 | `headless`, `slowMo`, `env`, `timeout` | same names | ✅ |
-| Browser → context → page hierarchy | one `QtApp` per process; its windows are found with locators (`app.windows()`) | ≈ |
-| `page.close()` / `browser.close()` | `app.close()` (terminates launched apps, detaches from attached ones) | ≈ |
-| `page.screenshot({ path })` | `app.screenshot({ path })` (focused window), `app.screenshotAllWindows()` | ≈ |
-| `recordVideo: { dir, size }`, `page.video().path() / saveAs() / delete()` | same; mp4 by default instead of webm | ✅ |
-| — | ➕ `app.startVideo(path)` / `video.stop()` for on-demand recordings, gif output, pointer and title bars drawn | ➕ |
-| `page.keyboard.press/type` | `app.press(key)`, `app.type(text)` (to the focused window) | ≈ |
-| `page.keyboard.down/up`, `page.mouse.move/down/up/wheel(x, y)` (coordinate-level input) | — | ❌ |
-| `page.evaluate(fn)` | `locator.invoke(method, ...args)`, `getProperty`, `setProperty` (no arbitrary code) | ≈ |
-| `page.on('dialog')`, `on('filechooser')`, `on('download')` | Qt dialogs are ordinary windows: use locators | ≈ |
+| `connect()` / `connectOverCDP()` | `attach('host:port')`; ➕ `attach(pid)` injects into a running process | ≈ |
+| browser → context → page | one `QtApp` per process; windows are found with locators (`app.windows()`) | ≈ |
+| `recordVideo`, `page.video().path/saveAs/delete` | same; mp4 by default; ➕ `app.startVideo()`/`stop()`, gif, drawn pointer | ✅ |
+| `selectors.setTestIdAttribute()` | `app.setTestIdAttribute(property)` (default `objectName`) | ≈ |
+| `page.setViewportSize` | resize windows with `setProperty('size', { width, height })` | ≈ |
+| `page.route`, request API, cookies, storage state, `context.clock`, permissions, geolocation | no Qt equivalent | ❌ |
+
+## Page-level API (`QtApp`)
+
+| Playwright | qt-playwright | |
+|---|---|---|
+| `locator`, `getByRole`, `getByLabel`, `getByPlaceholder`, `getByTitle`, `getByTestId`, `getByText` | same | ✅ |
+| `getByAltText` | — (no alt text in Qt; use `getByRole('img', { name })`) | ❌ |
+| `page.mouse` (`move`, `down`, `up`, `click`, `dblclick`, `wheel`) | `app.mouse`, in screen coordinates (`wheel` in Qt angle units) | ≈ |
+| `page.keyboard` (`down`, `up`, `press`, `type`, `insertText`) | same | ✅ |
+| `page.touchscreen.tap` | same (a real touch screen device) | ✅ |
+| `page.evaluate(fn, arg)` | runs in Qt's JavaScript engine; `qApp` is the application | ≈ |
+| `page.screenshot({ fullPage })` | `app.screenshot({ allWindows })` | ≈ |
+| `page.on('dialog')`, `waitForEvent('dialog')`, `Dialog.accept/dismiss/message` | same, for QDialog/QMessageBox and Qt Quick dialogs | ≈ |
+| `waitForEvent('filechooser')`, `FileChooser.setFiles/isMultiple` | same, for QFileDialog | ≈ |
+| `page.on('close')`, `waitForEvent('close')` | same | ✅ |
 | `page.on('console')` | `app.output()` (captured stdout/stderr) | ≈ |
-| `page.route`, network interception, `request` API, cookies, storage state | not applicable | ❌ |
-| `page.waitForEvent` | ➕ `waitForSignal`, `spy`, `app.waitForObject`, `onObjectCreated/Destroyed` | ≈ |
+| `page.pause()` | `app.pause()` (waits for Enter; inspect with the GammaRay client) | ≈ |
+| `page.title()` | `app.windows()` titles, `expect(app).toHaveTitle()` | ≈ |
+| `page.ariaSnapshot` | `app.ariaSnapshot()` | ✅ |
+| `page.addInitScript`, `exposeFunction`, frames, workers | not applicable | ❌ |
+| — | ➕ `waitForObject`, `onObjectCreated/Destroyed`, `waitForEvent('objectcreated')`, `sync()` | ➕ |
 
 ## Locators
 
 | Playwright | qt-playwright | |
 |---|---|---|
-| `page.locator(selector)`, `locator.locator()` | same | ✅ |
-| `first()`, `last()`, `nth(i)`, `count()`, `all()` | same | ✅ |
-| Strict mode, lazy re-resolution, auto-waiting | same rules: attached, visible, stable, enabled, receives events, and scroll into view before pointer actions | ✅ |
-| `getByText(text, { exact })` | same; text is the element's own `text`/`title`/... property, not the DOM's concatenated `textContent` | ≈ |
-| `getByRole`, `getByLabel`, `getByPlaceholder`, `getByAltText`, `getByTitle`, `getByTestId` | — (use `[placeholderText="..."]`, `#objectName`, types) | ❌ |
-| `filter({ hasText, has, hasNot })`, `and()`, `or()` | — (use `>>`, `[prop]` filters, `visible=true`) | ❌ |
-| `click`, `dblclick`, `hover`, `fill`, `clear`, `press`, `pressSequentially`, `type`, `check`, `uncheck`, `setChecked`, `focus`, `dragTo`, `scrollIntoViewIfNeeded`, `screenshot`, `waitFor` | same names and options (`button`, `modifiers`, `position`, `clickCount`, `force`, `timeout`, `sourcePosition`, `targetPosition`, `steps`) | ✅ |
-| `selectOption`, `setInputFiles`, `tap`, `dispatchEvent`, `blur`, `highlight`, `selectText` | — | ❌ |
-| `textContent`, `innerText`, `inputValue`, `isVisible`, `isHidden`, `isEnabled`, `isDisabled`, `isChecked`, `boundingBox` | same | ✅ |
-| `getAttribute`, `evaluate`, `evaluateAll`, `elementHandle` | `getProperty`, `getProperties`, `invoke`, `describe`, `handle()` | ≈ |
-| `locator.scroll...` / `mouse.wheel(dx, dy)` in pixels | `locator.scroll({ deltaX, deltaY })` in Qt wheel units (120 = one notch) | ≈ |
-| — | ➕ `dragBy(dx, dy)`, `spy(signal)`, `waitForSignal(signal)`, `visible()` | ➕ |
-
-## Selectors
-
-| Playwright | qt-playwright | |
-|---|---|---|
-| `>>` chaining, `text=...` (quoted exact, bare substring, `/regex/`), `nth=`, `visible=` | same syntax and semantics (Playwright's classic selector engine) | ✅ |
-| CSS: `#id`, `tag`, `[attr=value]`, `[attr*=value]` | `#objectName-or-QML-id`, C++/QML **type** (base classes match too), `[property=value]`, `[property*=value]`, `[property!=value]`, `[property=/re/]` | ≈ |
-| CSS combinators (descendant, `>`, `+`, `~`), pseudo-classes (`:has()`, `:visible`, `:text()`), `xpath=`, `internal:role=` | — | ❌ |
+| `locator`, `first`, `last`, `nth`, `count`, `all`, `filter({ hasText, hasNotText, has, hasNot, visible })`, `and`, `or`, `describe(text)` | same | ✅ |
+| `getByRole(role, { name, exact, checked, disabled, expanded, selected, pressed, level, includeHidden })` | same; roles from Qt's accessibility, with ARIA names | ✅ |
+| `getByText`, `getByLabel`, `getByPlaceholder`, `getByTitle` (tooltip), `getByTestId` | same | ✅ |
+| strict mode, lazy re-resolution, auto-waiting (attached, visible, stable, enabled, editable, receives events), scroll into view, `force`, `trial` | same | ✅ |
+| `click`, `dblclick`, `hover`, `tap`, `fill`, `clear`, `press`, `pressSequentially`, `type`, `check`, `uncheck`, `setChecked`, `focus`, `blur`, `selectText`, `dragTo`, `scrollIntoViewIfNeeded`, `screenshot({ mask, caret })`, `waitFor` | same | ✅ |
+| `selectOption` | QComboBox and QML ComboBox, through their popups; one option at a time | ≈ |
+| `setInputFiles` | on the button that opens a file dialog | ≈ |
+| `dispatchEvent(type)` | emits a signal / calls a slot by name | ≈ |
+| `evaluate`, `evaluateAll` | QObject wrappers in Qt's JS engine | ≈ |
+| `textContent`, `innerText`, `inputValue`, `isVisible`, `isHidden`, `isEnabled`, `isDisabled`, `isChecked`, `isEditable`, `boundingBox`, `ariaSnapshot` | same | ✅ |
+| `getAttribute(name)` | a Qt property as a string (`getProperty` for typed values) | ≈ |
+| `highlight`, `elementHandle(s)`, `contentFrame`, `frameLocator` | — (`handle()` gives a raw element id) | ❌ |
+| — | ➕ `dragBy`, `spy`, `waitForSignal`, `invoke`, `setProperty`, `getProperties`, `visible()` | ➕ |
 
 ## Assertions
 
 | Playwright | qt-playwright | |
 |---|---|---|
-| `toBeVisible`, `toBeHidden`, `toBeEnabled`, `toBeDisabled`, `toBeChecked`, `toBeAttached`, `toBeFocused`, `toHaveText`, `toContainText`, `toHaveValue`, `toHaveCount`, `.not` | same, retrying | ✅ |
-| `toHaveJSProperty(name, value)` | `toHaveProperty(name, value)` (Qt property) | ≈ |
-| `toHaveAttribute`, `toHaveClass`, `toHaveCSS`, `toHaveId`, `toBeEditable`, `toBeEmpty`, `toBeInViewport`, `toHaveAccessibleName/Role/Description`, `toHaveValues` | — | ❌ |
-| `toHaveScreenshot` (visual comparison with baselines) | — (screenshots exist; no diffing yet) | ❌ |
-| — | ➕ `expect(spy).toHaveBeenEmitted()`, `toHaveBeenEmittedTimes(n)`, `toHaveBeenEmittedWith(args)` | ➕ |
+| `toBeVisible`, `toBeHidden`, `toBeEnabled`, `toBeDisabled`, `toBeEditable`, `toBeChecked`, `toBeAttached`, `toBeFocused`, `toBeEmpty`, `toBeInViewport`, `toHaveText`, `toContainText`, `toHaveValue`, `toHaveCount`, `toHaveRole`, `toHaveAccessibleName`, `toHaveAccessibleDescription`, `toHaveId`, `toHaveJSProperty`, `toMatchAriaSnapshot`, `toHaveScreenshot`, `.not` | same | ✅ |
+| `toHaveAttribute` | a Qt property compared as text | ≈ |
+| `toHaveClass` | a C++ or QML type of the element | ≈ |
+| `toHaveCSS`, `toHaveValues`, `toHaveAccessibleErrorMessage` | — | ❌ |
+| `expect(page).toHaveTitle/toHaveScreenshot` | `expect(app)`; ➕ `expect(app).toMatchAriaSnapshot` | ≈ |
+| `expect(page).toHaveURL` | not applicable | ❌ |
+| — | ➕ `expect(spy).toHaveBeenEmitted/Times/With`, `toHaveProperty` | ➕ |
 
-## Qt-specific extras
+## Selectors
 
-- Properties and methods: `getProperty`, `setProperty` (enums by name, colors, geometry
-  types), `getProperties`, and `invoke` for slots, `Q_INVOKABLE`s and QML functions.
-- Signals: `waitForSignal`, `spy` and the spy assertions.
-- Object lifecycle: `app.waitForObject(selector)`, `onObjectCreated`,
-  `onObjectDestroyed`.
-- QML and C++ type selectors with inheritance, QML ids, the visual item tree and
-  popup contents.
-- Injection into already running processes (`attach(pid)`) and remote/embedded targets
-  (`attach('device:port')`), all through GammaRay's injectors.
-- Hit testing that understands Qt modality: modal windows, modal Qt Quick popups and
-  clipped Qt Quick items.
-- Video: one file showing all windows, with a drawn pointer, gif/mp4/webm output, and
-  on-demand start/stop.
-- `app.sync()` to wait for queued input to be delivered.
+| Playwright | qt-playwright | |
+|---|---|---|
+| `>>` chaining, `text=` (quoted, `"..."i`, regex), `nth=`, `visible=`, `internal:role=` / `has=` / `and=` / `or=` equivalents | `role=`, `label=`, `has=`, `hasNot=`, `hasText=`, `hasNotText=`, `and=`, `or=` | ✅ |
+| CSS `#id`, `tag`, `[attr=value]`, `[attr*=value]` | `#objectName-or-QML-id`, C++/QML type (with base classes), `[property=value]`, `!=`, `*=`, `/regex/` | ≈ |
+| CSS combinators and pseudo-classes, `xpath=` | — | ❌ |
 
-## Most valuable next steps toward parity
+## Tooling
 
-1. `getByRole`, `getByLabel` and `toHaveAccessibleName`, implemented on top of
-   `QAccessibleInterface`. Qt exposes roles and names for both Widgets and Qt Quick
-   controls.
-2. `locator.filter({ hasText, has })`, `and()` and `or()`, which compose cleanly with
-   the existing engine.
-3. `toHaveScreenshot` with baseline images and pixel diffing.
-4. A trace (action log with before/after screenshots per step), readable by Playwright's
-   trace viewer or a simple HTML report.
-5. Coordinate-level `mouse`/`keyboard` objects (`mouse.move/down/up`,
-   `keyboard.down/up`).
-6. `selectOption` for `QComboBox` / QML `ComboBox`.
+| Playwright | qt-playwright | |
+|---|---|---|
+| Trace viewer (`trace.zip`, `show-trace`) | self-contained HTML trace: actions, timing, errors, screenshots | ≈ |
+| `codegen` | `qt-playwright codegen <app>`: role/label/test-id locators, fill, press, check, selectOption, drags | ✅ |
+| Inspector, UI mode, VS Code extension | — (use the GammaRay client to inspect a running app) | ❌ |
+
+## Remaining gaps worth closing
+
+1. Playwright's own trace format, so `npx playwright show-trace` works. This needs DOM
+   snapshots, or at least screencast frames in its format.
+2. `toHaveCSS` for Qt style sheets / palettes, and `toHaveValues` for multi-selection
+   views.
+3. Model/view rows as elements (QListView, QTableView), via
+   `QAbstractItemView::visualRect`, so rows can be located, clicked and recorded by
+   codegen.
+4. An inspector UI, which could build on GammaRay's existing client.

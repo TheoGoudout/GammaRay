@@ -621,6 +621,26 @@ export class Locator {
     return (await this.app.connection.call<{ value: boolean }>('isEnabled', { handle })).value;
   }
 
+  /** Whether the element is an enabled, non-read-only input (throws for non-inputs, like Playwright). */
+  async isEditable(options: TimeoutOptions = {}): Promise<boolean> {
+    const handle = await this.handle(options);
+    const state = await this.app.connection.call<Actionability>('actionability', { handle, checkHitTarget: false });
+    if (state.editable === -1) throw new Error(`${this}.isEditable: element is not an input`);
+    return state.editable === 1;
+  }
+
+  /** Qt adaptation of getAttribute(): a Qt property as a string, or null if unset. */
+  async getAttribute(name: string, options: TimeoutOptions = {}): Promise<string | null> {
+    try {
+      const v = await this.getProperty(name, options);
+      if (v === null || v === undefined) return null;
+      return typeof v === 'string' ? v : JSON.stringify(v);
+    } catch (e) {
+      if (e instanceof QtError && e.code === ErrorCode.NotFound) return null;
+      throw e;
+    }
+  }
+
   async isDisabled(options: TimeoutOptions = {}): Promise<boolean> {
     return !(await this.isEnabled(options));
   }

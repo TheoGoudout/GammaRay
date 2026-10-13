@@ -157,14 +157,20 @@ contents). Results are in document order.
 | `Button`, `TextField`, `Item`, `Main` | QML type: Qt Quick classes without the `QQuick` prefix, QML-defined types by name |
 | `*` | anything |
 | `text="Save"` | text equals "Save" (case-sensitive, whitespace-normalized, `&` mnemonics ignored) |
-| `text=save` | text contains "save", case-insensitive |
+| `text="save"i`, `text=save` | text contains "save", case-insensitive |
 | `text=/^Sa.e$/i` | regular expression (flags `i`, `s`, `m`) |
+| `role=button[name="Save"i]` | accessibility role (ARIA names from Qt's accessibility) and accessible name, also `[checked=true]`, `[disabled]`, `[expanded]`, `[selected]`, `[pressed]`, `[level=2]`, `[include-hidden]` — what `getByRole` uses |
+| `label="User:"` | inputs by their label / accessible name — what `getByLabel` uses |
 | `[checked=true]`, `[echoMode=Password]` | property equals (enums by key name, numbers numerically) |
 | `[text!="x"]`, `[text*="Rem"]`, `[text=/re/]` | not-equals, contains, regex |
 | `[checked]` | property is truthy |
 | `A >> B` | `B` among the descendants of matches of `A` |
 | `nth=1`, `nth=-1`, `first`, `last` | pick one of the matches so far |
 | `visible=true` / `visible=false` | keep only (in)visible matches |
+| `hasText="x"i`, `hasNotText=/re/` | keep matches whose own or descendants' text matches (or not) — `filter({ hasText })` |
+| `has="sel"`, `hasNot="sel"` | keep matches with (without) a descendant matching `sel` — `filter({ has })` |
+| `and="sel"`, `or="sel"` | intersection with / union with (document order) another selector — `and()`, `or()` |
+| `handle=12` | the element with this handle (used internally for dialogs and file choosers) |
 
 Segments combine: `#loginBox >> QLineEdit[echoMode=Password]`,
 `QPushButton#ok[enabled=true]`. Quote values containing `]` or starting with `/`.
@@ -187,12 +193,15 @@ more specific selector, scope with `>>`, or use `.first()`, `.last()` or `.nth(i
 | `attach("host:port" \| "ws://...")` | connect to a running automation server, e.g. on a remote/embedded device |
 | `attach(pid)` | inject the probe into a running process (gdb/lldb) and enable automation in it |
 | `app.close()` | disconnect; for launched apps also terminate them |
-| `app.locator(sel)`, `app.getByText(t)`, `app.getById(id)` | locators |
-| `app.windows()`, `app.screenshot()`, `app.screenshotAllWindows()` | windows |
-| `app.press(key)`, `app.type(text)` | keyboard input to the focused window |
+| `app.locator(sel)`, `app.getByRole/Label/Placeholder/Title/TestId/Text(...)`, `app.getById(id)` | locators |
+| `app.windows()`, `app.screenshot({ allWindows })`, `app.screenshotAllWindows()`, `app.ariaSnapshot()` | windows |
+| `app.mouse`, `app.keyboard`, `app.touchscreen`, `app.press(key)`, `app.type(text)` | coordinate-level input (screen coordinates) |
+| `app.evaluate(fn, arg)` | run JavaScript in the app (`qApp` is the application object) |
+| `app.waitForEvent('dialog' \| 'filechooser' \| 'objectcreated' \| 'close')`, `app.on('dialog' \| 'close')`, `app.waitForDialog()`, `app.waitForFileChooser()` | events |
 | `app.waitForObject(sel)`, `app.onObjectCreated(cb)`, `app.onObjectDestroyed(cb)` | object lifecycle events |
 | `app.video()`, `app.startVideo(path, options)` | session video recording (see below) |
-| `app.setDefaultTimeout(ms)`, `app.slowMo`, `app.pid`, `app.info`, `app.output()` | misc |
+| `app.tracing.start()/stop({ path })`, `app.startCodegen()`, `app.pause()` | tracing, codegen, debugging |
+| `app.setDefaultTimeout(ms)`, `app.expectTimeout`, `app.slowMo`, `app.setTestIdAttribute(prop)`, `app.pid`, `app.info`, `app.output()` | misc |
 
 Remote or embedded targets: start the app on the device with
 `GAMMARAY_AUTOMATION_PORT=<port> GAMMARAY_AUTOMATION_ADDRESS=0.0.0.0 gammaray --inject-only ./app`
@@ -209,15 +218,17 @@ and `timeout` to override the default.
 
 | Actions | Queries | Composition |
 |-|-|-|
-| `click({button, modifiers, position, clickCount})` | `getProperty(name)`, `getProperties()` | `locator(sel)` |
-| `dblclick()`, `hover()` | `setProperty(name, value)` | `getByText(text, {exact})` |
-| `fill(text)`, `clear()` | `invoke(method, ...args)` | `first()`, `last()`, `nth(i)` |
-| `pressSequentially(text)` / `type(text)` | `textContent()`, `inputValue()` | `visible()` |
-| `press("Control+A")` | `isVisible()`, `isHidden()`, `isEnabled()`, `isChecked()` | `count()`, `all()`, `elements()` |
-| `check()`, `uncheck()`, `setChecked(b)` | `boundingBox()`, `describe()` | `handle()` |
-| `scroll({deltaX, deltaY})` (120 = one wheel notch) | `screenshot({path, window})` | |
-| `dragTo(locator)`, `dragBy(dx, dy)` | `waitFor({state})` | |
-| `focus()`, `scrollIntoViewIfNeeded()` | `waitForSignal(sig)`, `spy(sig)` | |
+| `click({button, modifiers, position, clickCount, delay, trial})` | `getProperty(name)`, `getProperties()` | `locator(sel, { hasText, has })` |
+| `dblclick()`, `hover()`, `tap()` | `setProperty(name, value)` | `getByRole(role, { name, exact, checked, ... })` |
+| `fill(text)`, `clear()`, `selectText()` | `invoke(method, ...args)`, `dispatchEvent(signalOrSlot)` | `getByLabel`, `getByPlaceholder`, `getByTitle`, `getByTestId`, `getByText` |
+| `pressSequentially(text, { delay })` / `type(text)` | `evaluate(fn, arg)`, `evaluateAll(fn, arg)` | `filter({ hasText, hasNotText, has, hasNot, visible })` |
+| `press("Control+A")` | `textContent()`, `inputValue()` | `and(other)`, `or(other)` |
+| `check()`, `uncheck()`, `setChecked(b)` | `isVisible()`, `isHidden()`, `isEnabled()`, `isChecked()` | `first()`, `last()`, `nth(i)`, `visible()` |
+| `selectOption(labelOrValue \| { label, value, index })` | `boundingBox()`, `describe()`, `ariaSnapshot()` | `count()`, `all()`, `elements()`, `handle()` |
+| `setInputFiles(files)` (button opening a file dialog) | `screenshot({ path, window, mask, caret })` | `describe(description)` |
+| `scroll({deltaX, deltaY})` (120 = one wheel notch) | `waitFor({ state })` | |
+| `dragTo(locator)`, `dragBy(dx, dy)` | `waitForSignal(sig)`, `spy(sig)` | |
+| `focus()`, `blur()`, `scrollIntoViewIfNeeded()` | | |
 
 Input is real input. Events go through QtGui's window system interface, the same path
 as platform input and QTest. Hit testing, modality, focus changes, enter/leave, hover
@@ -248,13 +259,152 @@ armed before the action's input is delivered.
 ### Assertions
 
 `expect(locator)` from `qt-playwright/test` (or `qt-playwright`) retries until the
-assertion passes or the timeout expires. All assertions support `.not`:
-`toBeVisible`, `toBeHidden`, `toBeEnabled`, `toBeDisabled`, `toBeChecked({checked})`,
-`toBeAttached`, `toBeFocused`, `toHaveText(str|re)`, `toContainText`, `toHaveValue`,
-`toHaveProperty(name, value)`, `toHaveCount(n)`. For spies: `toHaveBeenEmitted`,
-`toHaveBeenEmittedTimes(n)`, `toHaveBeenEmittedWith(args)`. The `expect` exported by
-`qt-playwright/test` passes any other value to Playwright's own `expect`. The one from
-`qt-playwright` only accepts Locators and spies.
+assertion passes or the timeout expires (`expectTimeout`, else the default timeout).
+All assertions support `.not`:
+
+- state: `toBeVisible`, `toBeHidden`, `toBeEnabled`, `toBeDisabled`, `toBeEditable`,
+  `toBeChecked({checked})`, `toBeAttached`, `toBeFocused`, `toBeEmpty`,
+  `toBeInViewport({ ratio })`
+- content: `toHaveText(str|re)`, `toContainText`, `toHaveValue`, `toHaveCount(n)`,
+  `toHaveProperty(name, value)` (alias `toHaveJSProperty`), `toHaveAttribute(name, value?)`
+  (a Qt property as text), `toHaveId` (objectName / QML id), `toHaveClass` (a C++/QML type)
+- accessibility: `toHaveRole`, `toHaveAccessibleName`, `toHaveAccessibleDescription`,
+  `toMatchAriaSnapshot(template)`
+- pixels: `toHaveScreenshot(name?, { mask, maxDiffPixels, maxDiffPixelRatio, threshold })`
+- the whole app, `expect(app)`: `toHaveTitle`, `toMatchAriaSnapshot`, `toHaveScreenshot`
+- spies: `toHaveBeenEmitted`, `toHaveBeenEmittedTimes(n)`, `toHaveBeenEmittedWith(args)`
+
+The `expect` exported by `qt-playwright/test` passes any other value to Playwright's
+own `expect`. The one from `qt-playwright` only accepts Locators, spies and apps.
+
+### Accessibility: roles, labels and ARIA snapshots
+
+`getByRole` and `getByLabel` use Qt's accessibility interfaces (activated on first
+use, which Qt Quick controls need). Qt roles are reported with ARIA names: `button`,
+`checkbox`, `radio`, `textbox`, `combobox`, `slider`, `spinbutton`, `list`,
+`listitem`, `tab`, `menuitem`, `dialog`, `group`, `text` for static text, and so on.
+Names come from labels (QFormLayout/buddy labels for widgets), `Accessible.name`, or
+the control's text, falling back to the placeholder.
+
+```ts
+await app.getByLabel('User:').fill('admin');
+await app.getByRole('button', { name: 'Login' }).click();
+await expect(app.locator('#loginBox')).toMatchAriaSnapshot(`
+  - group "Login":
+    - textbox "User:": admin
+    - checkbox "Remember me" [checked]
+    - button "Login"
+`);
+```
+
+Templates match partially, as in Playwright: listed nodes must appear in order, and
+other nodes may be in between. Names accept `/regex/`. `locator.ariaSnapshot()` and
+`app.ariaSnapshot()` produce such YAML from the live UI.
+
+### Running JavaScript in the application
+
+`evaluate` runs a function inside the application with Qt's JavaScript engine. QML
+elements use their own QML engine. Other objects use a private `QJSEngine`, in which
+`qApp` is the application object. Elements are passed as QObject wrappers, so their
+properties, slots, `Q_INVOKABLE`s and signals are all reachable. The result comes back
+as JSON, and QObjects come back as element references.
+
+```ts
+await app.locator('#todoList').evaluate((list) => list.positionViewAtEnd());
+const titles = await app.locator('ItemDelegate').evaluateAll((items) => items.map((i) => i.text));
+await app.locator('#username').evaluate((edit, text) => { edit.text = text; }, 'admin');
+const name = await app.evaluate(() => qApp.applicationName);
+```
+
+### Dialogs and file choosers
+
+Qt dialogs are ordinary windows (QDialog, QMessageBox, QFileDialog) or Qt Quick
+popups, so locators work on them directly. The Playwright-style helpers find them for
+you:
+
+```ts
+const dialogPromise = app.waitForEvent('dialog');
+await app.getByRole('button', { name: 'Reset...' }).click();
+const dialog = await dialogPromise;
+expect(await dialog.message()).toBe('Reset the login form?');
+await dialog.accept(); // Enter for widget dialogs (default button), accept() for Qt Quick
+
+app.on('dialog', (d) => d.dismiss()); // handle every dialog shown from now on
+
+await app.getByRole('button', { name: 'Choose file...' }).setInputFiles('data/input.csv');
+```
+
+`setInputFiles` clicks the element, waits for the file dialog, types the path into its
+file name field and presses Enter. Use `waitForEvent('filechooser')` to drive it
+yourself.
+
+### Mouse, keyboard and touch
+
+`app.mouse`, `app.keyboard` and `app.touchscreen` work in screen coordinates, the same
+coordinates as `boundingBox()`:
+
+```ts
+const box = (await slider.boundingBox())!;
+await app.mouse.move(box.x + 4, box.y + box.height / 2);
+await app.mouse.down();
+await app.mouse.move(box.x + box.width, box.y + box.height / 2, { steps: 10 });
+await app.mouse.up();
+await app.keyboard.down('Shift'); // held modifiers apply to later keys and clicks
+await app.keyboard.press('Home');
+await app.keyboard.up('Shift');
+await app.keyboard.insertText('ü€'); // input method commit, no key events
+await app.touchscreen.tap(box.x + 10, box.y + 10); // a real touch screen device
+```
+
+### Screenshot assertions
+
+`expect(locator).toHaveScreenshot()` waits until two consecutive screenshots are
+identical, then compares against a baseline stored next to the test. It uses
+Playwright's snapshot machinery: `--update-snapshots`, per-project snapshot
+directories, and `maxDiffPixels` / `maxDiffPixelRatio` / `threshold`. The text cursor
+is held steady, and `mask` paints over volatile elements. Font rendering differs
+between machines, so keep baselines per platform (Playwright adds the platform suffix)
+or limit them to font-free elements.
+
+### Tracing
+
+```ts
+await app.tracing.start({ title: 'checkout' });
+// ... actions ...
+await app.tracing.stop({ path: 'trace.html' });
+```
+
+The trace is a self-contained HTML viewer. It lists every API call with timing, its
+locator, any error and a screenshot of all windows after it (pointer included). With
+the fixture, Playwright's `trace` option (or `qtTrace`) records traces automatically
+and attaches them to the report: `'on'`, `'retain-on-failure'`, `'on-first-retry'`,
+`'on-all-retries'` or `'retain-on-first-failure'`.
+
+![The HTML trace viewer](docs/trace-viewer.png)
+
+### Codegen
+
+```sh
+npx qt-playwright codegen ./build/myapp [args...] > tests/recorded.spec.ts
+```
+
+`codegen` launches the application and records what you do as a qt-playwright test.
+It records clicks, double clicks, typing (one `fill` per field), key presses,
+check/uncheck, combo box selections and drags. Locators follow Playwright's preference
+order: role + name, label, placeholder, test id (objectName), QML id, text, then type.
+Each locator is made unique by scoping to the window or adding `.nth()` when needed:
+
+```ts
+await app.getByRole('textbox', { name: 'User:' }).fill('admin');
+await app.getByTestId('loginButton').click();
+await app.getByRole('combobox', { name: 'Color:' }).selectOption('Green');
+await app.locator('#qmlWindow').getByRole('button', { name: 'Add' }).click();
+```
+
+`app.startCodegen()` does the same from code. It records API-driven input too, which
+is how the recorder itself is tested: the generated code is replayed on a fresh
+instance. `app.pause()` stops a test until you press Enter, so you can inspect the
+running app, for example with the GammaRay client (`gammaray --connect`).
 
 ## Video recording
 
@@ -314,8 +464,11 @@ Methods: `hello`, `query {selector, scope?, describe?}`, `windows`, `describe`,
 `invokeMethod`, `isVisible`, `isEnabled`, `text`, `geometry`, `focus`, `click`,
 `doubleClick`, `hover`, `type`, `fill`, `press`, `scroll`, `drag`, `sync`,
 `screenshot`, `waitForSignal`, `spy`, `spyEvents`, `unspy`, `subscribe`,
-`startRecording`, `stopRecording`. Notifications: `objectsCreated {elements}`,
-`objectsDestroyed {handles}`. Video frames are binary messages: `"QTPW"`, a format
+`startRecording`, `stopRecording`, `evaluate`, `ariaSnapshot`, `screenshotAll`,
+`blur`, `tap`, `selectOption`, `mouseMove`, `mouseDown`, `mouseUp`, `mouseWheel`,
+`keyDown`, `keyUp`, `insertText`, `startCodegen`, `stopCodegen`. Notifications:
+`objectsCreated {elements}`, `objectsDestroyed {handles}`, `codegenAction`. Video
+frames are binary messages: `"QTPW"`, a format
 byte, 3 bytes of padding, uint32 recording id, float64 milliseconds, then the JPEG/PNG
 data, little endian. Elements are referred to by
 stable integer **handles**, which are never reused. A handle to a destroyed object
@@ -348,8 +501,21 @@ later requests are served from the nested event loop.
 - **Not covered:** QGraphicsView items, Qt 3D, Qt WebEngine content, native platform
   dialogs and menus. QQuickWidget content is supported but less tested. Widget drag and
   drop through `QDrag` is untested.
-- `invoke()` is synchronous: invoking something that runs `exec()` only returns when
-  the dialog closes. Click the button that opens it instead.
+- `invoke()` and `evaluate()` are synchronous: calling something that runs `exec()`
+  only returns when the dialog closes. Click the button that opens it instead.
+  `evaluate` runs in Qt's JavaScript engine (ECMAScript 2017+), which has no DOM, and
+  returned promises are not awaited.
+- **Accessibility** is activated in the application on the first role/label query.
+  Qt Quick only keeps accessible names and states up to date while a screen reader
+  bridge is connected, so qt-playwright falls back to `Accessible.*` properties, text,
+  placeholders and `checked`/`pressed` properties. Roles and names can differ slightly
+  from what a screen reader announces.
+- **Codegen** records model/view rows (QListView, QTableView) as clicks on the view,
+  without the row, and doesn't record scrolling, hovering or Qt Quick drags that a
+  DragHandler handles by touch.
+- **Not available:** Playwright's network interception, clock control, browser
+  contexts and storage state (no Qt equivalent), and the Playwright trace viewer and UI
+  mode (qt-playwright has its own HTML trace instead).
 - **Platforms:** developed and tested on Linux with Qt 6.8 and the offscreen platform.
   Launching should work wherever GammaRay injection works (Windows `windll`, macOS
   preload) but is untested. Attaching by pid needs gdb or lldb and ptrace permission.

@@ -290,6 +290,10 @@ test.describe('snapshots, screenshots, traces', () => {
     await expect(q.locator('#loginButton')).toHaveClass('Button');
     await expect(q.locator('#loginButton')).toHaveAttribute('text', 'Login');
     await expect(q.locator('#loginButton')).toHaveJSProperty('flat', false);
+    expect(await q.locator('#usernameField').isEditable()).toBe(true);
+    expect(await app.locator('#widgetsWindow >> #serialField').isEditable()).toBe(false);
+    expect(await q.locator('#loginButton').getAttribute('text')).toBe('Login');
+    expect(await q.locator('#loginButton').getAttribute('noSuchProperty')).toBeNull();
   });
 
   test('tracing records actions, errors and screenshots', async ({ app }, testInfo) => {

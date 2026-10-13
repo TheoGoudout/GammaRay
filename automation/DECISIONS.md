@@ -161,3 +161,69 @@ option preferred. Newest entries go at the bottom.
      webm, mkv, mov and gif are also available.
    - If the client falls behind (more than 64 MB buffered in the app), frames are dropped
      so a slow consumer cannot exhaust the application's memory.
+
+## D17. Accessibility for getByRole / getByLabel / ARIA snapshots
+
+- Options: (a) map Qt classes to roles by hand; (b) use Qt's accessibility interfaces
+  (`QAccessible::queryAccessibleInterface`), which already know roles, names and
+  states for Widgets and Qt Quick Controls.
+- **Chosen: (b)**, with ARIA role names so Playwright users' `getByRole('button')` works
+  as is. Qt Quick controls only create interfaces once accessibility is active, so it is
+  activated lazily, on the first role/label query (`QAccessible::setActive(true)`).
+  Apps that never use these queries see no change.
+- Without a platform bridge (offscreen, CI), Qt Quick doesn't push names and states
+  into its interfaces, so names fall back to `Accessible.name` (read from the attached
+  object), then text, then placeholder. States fall back to the `checked`/`pressed`
+  properties. A QComboBox is named after its buddy label rather than its current text,
+  as browsers do, which keeps locators stable.
+
+## D18. evaluate()
+
+- Playwright evaluates JavaScript in the page. Qt ships a JavaScript engine, and every
+  QObject can be exposed to it with its properties, slots, invokables and signals.
+- **Chosen:** QML objects are evaluated by their own `QQmlEngine`, so QML values and
+  types behave natively. Everything else uses a private `QJSEngine` with `qApp` bound.
+  Functions travel as source text (as in Playwright), arguments and results as JSON,
+  and QObjects as element references. Promises are not awaited (the engine has no
+  event loop integration for that).
+
+## D19. Dialogs, file choosers, selectOption: real UI instead of shortcuts
+
+- Options: call slots (`QComboBox::setCurrentIndex`, `QDialog::accept`,
+  `QFileDialog::selectFile`), or drive the UI as a user would.
+- **Chosen: the UI path wherever practical.** `selectOption` opens the popup and clicks
+  the item, so `activated` fires. `setInputFiles` types into the file dialog's name
+  field and presses Enter. Widget dialogs are accepted/dismissed with Enter/Escape, so
+  QMessageBox returns the right button. Qt Quick dialogs use `accept()`/`reject()`,
+  which is what their buttons call.
+
+## D20. Tracing format
+
+- Options: (a) Playwright's `trace.zip` for `npx playwright show-trace`; (b) our own
+  self-contained HTML trace viewer.
+- **Chosen: (b).** Playwright's trace format is an internal, versioned format built
+  around DOM snapshots and network logs. Neither exists for Qt, and following its
+  changes would be fragile. The HTML trace needs no tooling, opens from the test report,
+  and shows each API call with its locator (described as code), duration, error and a
+  composed screenshot of all windows (with the pointer) after it.
+
+## D21. Codegen
+
+- Recording happens in the probe through an application-wide event filter, so it sees
+  real user input and API-synthesized input alike. That makes it testable: the codegen
+  spec drives the app with the API and replays the generated code on a fresh instance.
+- Mouse targets for Qt Quick come from our own hit test at the window, because the
+  delivery agent sends copies of events to items. Keys come from the focus
+  widget/item, typing is coalesced into one `fill()`, and combo box popups become
+  `selectOption()`.
+- Locators follow Playwright's preference order: role + name, label, placeholder, test
+  id, QML id, text, then type. Each candidate is checked with the real selector engine
+  and scoped to the window or given `.nth()` when ambiguous.
+
+## D22. getByText default and locator descriptions
+
+- `getByText` initially defaulted to an exact match. It now follows Playwright:
+  case-insensitive substring unless `exact: true`. Raw `text="..."` selectors are
+  unchanged (quoted = exact).
+- Locators remember how they were built, and errors, report steps and traces show
+  `getByRole('button', { name: 'Login' }).first()` rather than the internal selector.
