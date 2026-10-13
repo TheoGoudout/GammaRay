@@ -491,6 +491,7 @@ export class Locator {
 }
 
 export function textSelector(text: string | RegExp, exact?: boolean): string {
-  if (text instanceof RegExp) return `text=/${text.source.replace(/\//g, '\\/')}/${text.flags.includes('i') ? 'i' : ''}`;
+  // RegExp.source already escapes '/'; the selector engine supports the i, s and m flags
+  if (text instanceof RegExp) return `text=/${text.source}/${text.flags.replace(/[^ism]/g, '')}`;
   return exact === false ? `text=${text}` : `text=${quote(text)}`;
 }
