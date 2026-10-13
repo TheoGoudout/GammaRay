@@ -7,7 +7,7 @@ actions, retrying assertions and `@playwright/test` fixtures. Under the hood it 
 probe plugin (`gammaray_automation`) serves a JSON-RPC API over WebSocket from inside
 the process.
 
-```
+```text
  test (Node)                            application process
  ┌───────────────────────┐   ws://     ┌───────────────────────────────────────────┐
  │ qt-playwright         │◄──────────► │ GammaRay probe                            │

@@ -989,9 +989,7 @@ void AutomationServer::registerHandlers()
         *timer = new QTimer(this);
         (*timer)->setSingleShot(true);
         connect(*timer, &QTimer::timeout, this, [reply, cleanup, signal, timeout]() {
-            reply->fail(Timeout, QStringLiteral("timed out after %1 ms waiting for signal %2")
-                                     .arg(timeout)
-                                     .arg(QString::fromLatin1(signal.methodSignature())));
+            reply->fail(Timeout, QStringLiteral("timed out after %1 ms waiting for signal %2").arg(timeout).arg(QString::fromLatin1(signal.methodSignature())));
             cleanup();
         });
         connect(obj, &QObject::destroyed, *timer, [reply, cleanup]() {

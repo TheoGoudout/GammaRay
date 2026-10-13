@@ -53,32 +53,35 @@ end-to-end test framework on top of it. File references are relative to the repo
   5. A safety timer (60 s, or `GAMMARAY_LAUNCHER_TIMEOUT`) runs unless the UI mode is
      in-process. If no server address arrives before it fires, the launcher treats the
      launch as failed, exits, and so kills the target.
-- **Injectors** (`launcher/core/injector/`):
-  - `preload` is the default for launch on Linux and macOS. It sets
-    `LD_PRELOAD`/`DYLD_INSERT_LIBRARIES` to the probe and `GAMMARAY_UNSET_PRELOAD=1`, so
-    child processes don't inherit it. ASAN libraries are put first.
-  - `gdb` and `lldb` are used for attach. They break into the process and `dlopen` the
-    probe, then call `gammaray_probe_attach()`. Attaching needs gdb/lldb and ptrace
-    permission (`/proc/sys/kernel/yama/ptrace_scope`).
-  - `windll` (Windows, CreateRemoteThread), `style` (injects through the
-    `-style gammaray-injector` Qt style plugin, which works without preload or debugger
-    support) and `process` (the target is already linked against the probe).
+
+**Injectors** (`launcher/core/injector/`):
+
+- `preload` is the default for launch on Linux and macOS. It sets
+  `LD_PRELOAD`/`DYLD_INSERT_LIBRARIES` to the probe and `GAMMARAY_UNSET_PRELOAD=1`, so
+  child processes don't inherit it. ASAN libraries are put first.
+- `gdb` and `lldb` are used for attach. They break into the process and `dlopen` the
+  probe, then call `gammaray_probe_attach()`. Attaching needs gdb/lldb and ptrace
+  permission (`/proc/sys/kernel/yama/ptrace_scope`).
+- `windll` (Windows, CreateRemoteThread), `style` (injects through the
+  `-style gammaray-injector` Qt style plugin, which works without preload or debugger
+  support) and `process` (the target is already linked against the probe).
+
 - **CLI modes that matter for headless use:**
-  - `--inject-only` gives `UiMode::NoUi`: no client is started, but the probe's TCP
-    server still listens (`RemoteAccessEnabled` defaults to true).
-  - `--no-listen` sets `RemoteAccessEnabled=false` **and forces `InProcessUi`**. The two
-    flags are order-sensitive: `--inject-only --no-listen` ends up in in-process UI mode
-    and tries to show GammaRay's main window. `--no-listen --inject-only` gives NoUi
-    without a server, **but** then the probe never sends a server address, the
-    launcher's safety timer fires after 60 s, and the launcher exits and kills the
-    target. **Conclusion: in automation mode, use `--inject-only --listen tcp://127.0.0.1`
-    and do not use `--no-listen`.** Our own server has to report its readiness on its own
-    channel (see §5).
-  - `--listen <url>` sets the probe's `ServerAddress`. `TcpServerDevice::listen()` falls
-    back to a random port if the requested one is busy, so parallel targets work.
-  - `-p/--pid <pid>` attaches. `--connect host:port` only starts the GUI client against
-    an already-running probe.
-  - `--probe <abi>` and `--list-probes` override the ABI.
+- `--inject-only` gives `UiMode::NoUi`: no client is started, but the probe's TCP
+  server still listens (`RemoteAccessEnabled` defaults to true).
+- `--no-listen` sets `RemoteAccessEnabled=false` **and forces `InProcessUi`**. The two
+  flags are order-sensitive: `--inject-only --no-listen` ends up in in-process UI mode
+  and tries to show GammaRay's main window. `--no-listen --inject-only` gives NoUi
+  without a server, **but** then the probe never sends a server address, the
+  launcher's safety timer fires after 60 s, and the launcher exits and kills the
+  target. **Conclusion: in automation mode, use `--inject-only --listen tcp://127.0.0.1`
+  and do not use `--no-listen`.** Our own server has to report its readiness on its own
+  channel (see §5).
+- `--listen <url>` sets the probe's `ServerAddress`. `TcpServerDevice::listen()` falls
+  back to a random port if the requested one is busy, so parallel targets work.
+- `-p/--pid <pid>` attaches. `--connect host:port` only starts the GUI client against
+  an already-running probe.
+- `--probe <abi>` and `--list-probes` override the ABI.
 - **Without a launcher.** `ProbeSettings::value(key)` (`core/probesettings.cpp`) falls
   back to the environment variable `GAMMARAY_<key>` when the launcher didn't provide the
   key. If no launcher local server exists, the probe connects, fails immediately and
@@ -87,15 +90,15 @@ end-to-end test framework on top of it. File references are relative to the repo
   is a fully launcher-less, headless injection. `tests/baseprobetest.h` does the same
   thing in-process.
 - **Remote and embedded targets:**
-  - The probe's server listens on `tcp://0.0.0.0:11732` by default and broadcasts UDP
-    discovery on port 13325 every 5 s (`core/remote/server.cpp`). Remote targets are
-    started on the device with `gammaray --inject-only --listen tcp://0.0.0.0:<port>`
-    (or with the env-var form) and reached over the network.
-  - `GAMMARAY_STATIC_PROBE` (`core/staticprobe.h`) links the probe and plugins statically
-    for iOS and some embedded setups. The app adds `GAMMARAY_STATIC_INJECT` in
-    `main.cpp`, and plugins are pulled in with `Q_IMPORT_PLUGIN`. An automation plugin
-    would need one more `Q_IMPORT_PLUGIN` line there.
-  - On Android, settings come from `<meta-data android:name="com.kdab.gammaray.<key>">`.
+- The probe's server listens on `tcp://0.0.0.0:11732` by default and broadcasts UDP
+  discovery on port 13325 every 5 s (`core/remote/server.cpp`). Remote targets are
+  started on the device with `gammaray --inject-only --listen tcp://0.0.0.0:<port>`
+  (or with the env-var form) and reached over the network.
+- `GAMMARAY_STATIC_PROBE` (`core/staticprobe.h`) links the probe and plugins statically
+  for iOS and some embedded setups. The app adds `GAMMARAY_STATIC_INJECT` in
+  `main.cpp`, and plugins are pulled in with `Q_IMPORT_PLUGIN`. An automation plugin
+  would need one more `Q_IMPORT_PLUGIN` line there.
+- On Android, settings come from `<meta-data android:name="com.kdab.gammaray.<key>">`.
 
 ### 1.2 Probe startup (`probe/`, `core/probe.cpp`)
 
@@ -127,9 +130,9 @@ end-to-end test framework on top of it. File references are relative to the repo
 - Objects created from a constructor are queued and announced later from the probe
   thread, once construction has finished (`queueCreatedObject`, then
   `processQueuedObjectChanges`, then `objectFullyConstructed`). The probe then emits:
-  - `objectCreated(QObject*)`, after the object is fully constructed, on the GUI thread
-  - `objectDestroyed(QObject*)`: the pointer is dangling, so use it only as a key
-  - `objectReparented(QObject*)`
+- `objectCreated(QObject*)`, after the object is fully constructed, on the GUI thread
+- `objectDestroyed(QObject*)`: the pointer is dangling, so use it only as a key
+- `objectReparented(QObject*)`
 - `Probe::allQObjects()` lists every known object. `Probe::isValidObject(obj)` must be
   checked **under `objectLock()`** before you dereference a pointer whose lifetime you
   don't control.
@@ -160,11 +163,13 @@ end-to-end test framework on top of it. File references are relative to the repo
   Everything assumes both sides are Qt programs with identical `QDataStream` versions
   and the same custom metatype stream operators (`common/streamoperators.cpp`). The
   protocol has an exact version check (`Protocol::version()`).
-- Tools follow a three-part pattern:
-  - `*Interface` in common code: a `QObject` with signals/slots and `Q_DECLARE_INTERFACE`
-  - a probe-side implementation, registered with `ObjectBroker::registerObject`
-  - a UI-side `*Client` proxy that forwards calls through `Endpoint::invokeObject`
-  - models published with `Probe::registerModel`, consumed with `ObjectBroker::model`
+
+Tools follow a three-part pattern:
+
+- `*Interface` in common code: a `QObject` with signals/slots and `Q_DECLARE_INTERFACE`
+- a probe-side implementation, registered with `ObjectBroker::registerObject`
+- a UI-side `*Client` proxy that forwards calls through `Endpoint::invokeObject`
+- models published with `Probe::registerModel`, consumed with `ObjectBroker::model`
 
 ## 4. How existing tools reach objects, properties, signals and events
 

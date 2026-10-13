@@ -158,7 +158,7 @@ private slots:
         QCOMPARE(names(query(QStringLiteral("QPushButton[text=\"Cancel\"]"))), QStringList { "cancel" });
         // mnemonics are ignored when comparing
         QCOMPARE(names(query(QStringLiteral("QPushButton[text=\"Log in\"]"))), QStringList { "ok" });
-        QCOMPARE(names(query(QStringLiteral("QPushButton[text*=anc]"))), QStringList { "cancel" });
+        QCOMPARE(names(query(QStringLiteral("QPushButton[text*=ncel]"))), QStringList { "cancel" });
         QCOMPARE(names(query(QStringLiteral("QPushButton[text=/^C/]"))), QStringList { "cancel" });
         QCOMPARE(names(query(QStringLiteral("QWidget[objectName=user]"))), QStringList { "user" });
     }

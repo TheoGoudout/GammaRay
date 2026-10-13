@@ -14,5 +14,11 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Qml Quick QuickControls2)
 
-add_executable(sampleapp main.cpp widgetswindow.cpp widgetswindow.h qml.qrc)
-target_link_libraries(sampleapp PRIVATE Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2)
+add_executable(
+    sampleapp
+    main.cpp qml.qrc widgetswindow.cpp widgetswindow.h
+)
+target_link_libraries(
+    sampleapp
+    PRIVATE Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2
+)

@@ -455,7 +455,7 @@ static bool attributeMatches(QObject *obj, const AttributeFilter &attr)
     }
     case AttributeFilter::Contains:
         matched = attr.matcher.mode == ValueMatcher::Regex ? attr.matcher.matches(actual)
-                                                          : actual.contains(attr.matcher.value);
+                                                           : actual.contains(attr.matcher.value);
         break;
     }
     return matched;

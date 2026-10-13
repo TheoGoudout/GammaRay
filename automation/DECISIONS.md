@@ -4,11 +4,13 @@ Each entry lists the options considered and the one chosen, with the simplest vi
 option preferred. Newest entries go at the bottom.
 
 ## D1. Backend: in-process probe plugin (A) vs. external client on the remote protocol (B)
+
 - **Chosen: A.** See `ARCHITECTURE_NOTES.md` §6. Under B, the probe would need new
   server-side methods anyway, and a Node client would have to reimplement Qt's
   `QDataStream`/`QVariant` wire format.
 
 ## D2. Transport library: QtWebSockets vs. a hand-written RFC 6455 server on QTcpServer
+
 - Options: (a) depend on Qt WebSockets, an extra Qt module, and build the plugin only
   when it is available; (b) write about 300 lines of WebSocket framing on top of
   QtNetwork.
@@ -16,6 +18,7 @@ option preferred. Newest entries go at the bottom.
   the optional plugin only, and GammaRay's core build is unaffected.
 
 ## D3. Event injection: QTest vs. RemoteViewServer-style postEvent
+
 - Initial choice: QTest (`QTest::mouseClick`, `keyClick` and related functions on the
   target `QWindow`), because it goes through `QWindowSystemInterface`.
 - **Revised during Phase 1:** QTest's helpers call `qApp->processEvents()` after every
@@ -27,12 +30,14 @@ option preferred. Newest entries go at the bottom.
   dependency on `Qt::GuiPrivate`, which GammaRay core already uses.
 
 ## D4. Location of the plugin
+
 - Options: `plugins/automation/`, following the convention for all other probe plugins,
   or `automation/probe/` pulled in from the top-level CMake.
 - **Chosen: `plugins/automation/`**, gated on `Qt::WebSockets` and `Qt::Test`. The Node
   client, examples and docs live under `automation/`.
 
 ## D5. Readiness/port discovery
+
 - Options: fixed port; a port file; a stdout line.
 - **Chosen:** default port 0 (pick a free port) plus a single stdout line
   `GammaRay automation server listening on ws://<addr>:<port>`, which the launcher
@@ -40,13 +45,16 @@ option preferred. Newest entries go at the bottom.
   `GAMMARAY_AUTOMATION_PORT_FILE` is available for setups without stdout access.
 
 ## D6. Launch mode
+
 - `--no-listen` cannot be combined with `--inject-only` without either showing the
   in-process UI or hitting the launcher's 60 s safety timeout, which kills the target.
-- **Chosen:** `gammaray --inject-only --listen tcp://127.0.0.1 <app>` (default port 11732, with automatic fallback to a free port when it is busy). The GammaRay
-  server stays up on loopback, which also keeps manual inspection possible, and the
-  launcher lives exactly as long as the target.
+- **Chosen:** `gammaray --inject-only --listen tcp://127.0.0.1 <app>` (default port 11732,
+  with automatic fallback to a free port when it is busy). The GammaRay server stays up on
+  loopback, which also keeps manual inspection possible, and the launcher lives exactly as
+  long as the target.
 
 ## D7. Executing input without blocking on nested event loops
+
 - Problem: a click that opens a modal dialog (`QDialog::exec()`), or a drag that
   starts `QDrag::exec()`, never returns to the RPC handler.
 - Options: (a) post the whole action and reply immediately; (b) run the action
@@ -58,6 +66,7 @@ option preferred. Newest entries go at the bottom.
   handler.
 
 ## D8. Opt-in activation
+
 - The plugin is loaded into every GammaRay-injected process (metadata type `QObject`),
   including normal interactive GammaRay sessions.
 - **Chosen:** the server listens only if `GAMMARAY_AUTOMATION_PORT` or the probe
@@ -69,12 +78,14 @@ option preferred. Newest entries go at the bottom.
   only change outside the new plugin, apart from build files.
 
 ## D9. Element handles
+
 - **Chosen:** a monotonically increasing integer per object, backed by `QPointer`
   (plus a reverse hash for stable ids). Handles are never reused, so a destroyed object
   yields a clear "stale handle" error. Locators re-resolve on every action, so clients
   rarely hold handles across UI changes.
 
 ## D10. What "text" means and how `text=` handles composite controls
+
 - Qt has no DOM `textContent`. **Chosen:** the first existing `text`, `plainText`,
   `currentText` or `title` property (the window title for top-level widgets). Mnemonic
   `&`s are ignored when matching.
@@ -84,6 +95,7 @@ option preferred. Newest entries go at the bottom.
   button inside it are both found.
 
 ## D11. Scrolling into view and hit testing
+
 - Like Playwright, pointer actions first reveal the element: enclosing `Flickable`s
   get their `contentX`/`contentY` adjusted, and `QScrollArea::ensureWidgetVisible` is
   used for widgets. The adjustment is programmatic, as in browsers.
@@ -94,6 +106,7 @@ option preferred. Newest entries go at the bottom.
   limitations).
 
 ## D12. GammaRay plugins in automation sessions
+
 - **Chosen:** `launch()` disables all inspection tool plugins
   (`DEFAULT_DISABLED_PLUGINS`) through `GAMMARAY_DisabledPlugins`. The widget
   inspector makes modal dialogs non-modal, the signal and event monitors install global
@@ -101,12 +114,14 @@ option preferred. Newest entries go at the bottom.
   names.
 
 ## D13. Qt 5.15
+
 - GammaRay 3.x requires Qt ≥ 6.5. Supporting Qt 5.15 would mean porting the probe
   plugin to the GammaRay 2.11 branch, which is not cheap. **Chosen:** Qt 6 only. The
   plugin uses Qt 6 APIs freely (`QMetaType`-based invocation, `QEnterEvent`...). The
   JSON protocol and the TypeScript client are Qt-version agnostic.
 
 ## D14. Test runner integration
+
 - **Chosen:** `@playwright/test` fixtures (`qt-playwright/test`): an `app` fixture
   launched per test, the options `qtApp` and `qtScreenshot`, API calls reported as test
   steps, and window screenshots plus app output attached on failure. The core library
@@ -118,6 +133,7 @@ option preferred. Newest entries go at the bottom.
   resolves its own copy of `@playwright/test`, which Playwright rejects.
 
 ## D15. Default click position
+
 - Center of the element, except for `QCheckBox`/`QRadioButton`. Those only react to
   their indicator and label (`SE_CheckBoxClickRect`), which a layout can move far from
   the center.

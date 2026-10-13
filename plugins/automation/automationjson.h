@@ -46,7 +46,7 @@ QVariant jsonToVariant(const QJsonValue &value, QMetaType type, const ObjectMapp
 bool writeProperty(QObject *obj, const QString &name, const QJsonValue &value,
                    const ObjectMapper &mapper, QString *error);
 
-/*! Finds a method (slot, invokable, signal or QML function) by name or full signature. */
+/*! Finds a method (slot, invocable, signal or QML function) by name or full signature. */
 QMetaMethod findMethod(const QMetaObject *mo, const QString &nameOrSignature, int argc,
                        QMetaMethod::MethodType type, QString *error);
 
