@@ -11,13 +11,17 @@ import {WebSocketServer} from 'ws';
 
 const require = createRequire(import.meta.url);
 const {Connection, QtError, TimeoutError, quote} = require('../dist/index.js');
-const {textSelector} = require('../dist/locator.js');
+const {textSelector, roleSelector, propertySelector} = require('../dist/selectors.js');
 const {poll} = require('../dist/wait.js');
 
 test('text selectors', () => {
-    assert.equal(textSelector('Save'), 'text="Save"');
-    assert.equal(textSelector('Save', false), 'text=Save');
-    assert.equal(textSelector('He said "hi"'), 'text="He said \\"hi\\""');
+    assert.equal(textSelector('Save', true), 'text="Save"');
+    assert.equal(textSelector('Save'), 'text="Save"i'); // Playwright default: substring
+    assert.equal(roleSelector('button', {name : 'OK'}), 'role=button[name="OK"i]');
+    assert.equal(roleSelector('checkbox', {name : /re/, checked : true, includeHidden : true}),
+                 'role=checkbox[name=/re/][checked=true][include-hidden=true]');
+    assert.equal(propertySelector('placeholderText', 'a.b'), '[placeholderText=/a\\.b/i]');
+    assert.equal(textSelector('He said "hi"', true), 'text="He said \\"hi\\""');
     assert.equal(textSelector(/sa.e/i), 'text=/sa.e/i');
     assert.equal(textSelector(/a\/b/), 'text=/a\\/b/');
     assert.equal(quote('x'), '"x"');
@@ -60,4 +64,41 @@ test('JSON-RPC connection: results, errors, notifications, close', async () => {
     await new Promise((r) => conn.once('close', r));
     await assert.rejects(conn.call('echo'), /closed/);
     server.close();
+});
+
+test('aria snapshots: rendering and partial template matching', () => {
+    const {renderAriaSnapshot, matchesAriaTemplate} = require('../dist/aria.js');
+    const tree = [ {
+        role : 'group',
+        name : 'Login',
+        children : [
+            {role : 'textbox', name : 'User', value : 'admin'},
+            {role : 'checkbox', name : 'Remember me', checked : true},
+            {role : 'button', name : 'Login', disabled : true},
+            {role : 'text', name : 'Please log in'},
+        ],
+    } ];
+    assert.equal(renderAriaSnapshot(tree), [
+        '- group "Login":',
+        '  - textbox "User": admin',
+        '  - checkbox "Remember me" [checked]',
+        '  - button "Login" [disabled]',
+        '  - text: Please log in',
+    ].join('\n'));
+    // subset, in order, with regexes and attributes
+    assert.ok(matchesAriaTemplate(`
+    - group "Login":
+      - textbox /Us/: admin
+      - button "Login" [disabled]
+  `,
+                                  tree));
+    assert.ok(matchesAriaTemplate('- button "Login"', tree)); // found anywhere
+    assert.ok(!matchesAriaTemplate('- button "Login" [disabled=false]', tree));
+    assert.ok(!matchesAriaTemplate(`
+    - group "Login":
+      - button "Login"
+      - textbox "User"
+  `,
+                                   tree)); // wrong order
+    assert.ok(!matchesAriaTemplate('- checkbox "Remember me" [checked=false]', tree));
 });

@@ -73,6 +73,7 @@ ApplicationWindow {
                 Button {
                     id: loginButton
                     text: "Login"
+                    Accessible.description: "Sign in with your account"
                     enabled: usernameField.text.length > 0 && passwordField.text.length > 0
                     onClicked: qmlWindow.login()
                 }
@@ -150,6 +151,36 @@ ApplicationWindow {
             Label {
                 id: volumeLabel
                 text: "Volume: " + Math.round(volumeSlider.value)
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            ComboBox {
+                id: fruitCombo
+                model: ["Apple", "Banana", "Cherry"]
+                onActivated: (index) => fruitLabel.text = "Fruit: " + textAt(index)
+            }
+            Label {
+                id: fruitLabel
+                text: "No fruit"
+            }
+            Rectangle {
+                id: tapArea
+                Layout.fillWidth: true
+                Layout.preferredHeight: 30
+                color: "lightgreen"
+                Accessible.role: Accessible.Button
+                Accessible.name: "Touch target"
+                TapHandler {
+                    acceptedDevices: PointerDevice.TouchScreen
+                    onTapped: tapLabel.text = "Tapped by touch"
+                }
+                Label {
+                    id: tapLabel
+                    anchors.centerIn: parent
+                    text: "Tap me"
+                }
             }
         }
 

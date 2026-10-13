@@ -5,10 +5,22 @@ import { writeFile } from 'node:fs/promises';
 import type { QtApp } from './app';
 import { ErrorCode, QtError, StrictModeViolationError } from './errors';
 import { step } from './instrumentation';
+import {
+  labelSelector,
+  propertySelector,
+  quote,
+  roleSelector,
+  textSelector,
+  textValue,
+  type AriaRole,
+  type ByRoleOptions,
+} from './selectors';
 import { SignalSpy } from './signalspy';
 import type {
   ActionOptions,
   ClickOptions,
+  SelectOption,
+  TypeOptions,
   DragOptions,
   ElementInfo,
   ElementRef,
@@ -19,28 +31,51 @@ import type {
   TimeoutOptions,
   WaitForState,
 } from './types';
+import { renderAriaSnapshot, type AriaNode } from './aria';
 import { poll, sleep } from './wait';
 
-interface Actionability {
+export interface Actionability {
   attached: boolean;
   visible?: boolean;
   enabled?: boolean;
+  /** -1: not an input, 0: read-only or disabled, 1: editable */
+  editable?: number;
   hasGeometry?: boolean;
   geometry?: Rect;
+  viewportRatio?: number;
   blockedBy?: string;
+}
+
+export interface FilterOptions {
+  /** Keep elements containing (themselves or in a descendant) this text: substring, case-insensitive. */
+  hasText?: string | RegExp;
+  hasNotText?: string | RegExp;
+  /** Keep elements with a descendant matching this (relative) locator. */
+  has?: Locator;
+  hasNot?: Locator;
+  /** Keep only visible (true) or hidden (false) elements. */
+  visible?: boolean;
+}
+
+/** A JavaScript function (or its source) run inside the application by Qt's JS engine. */
+export type PageFunction<Arg, R> = string | ((element: any, arg: Arg) => R);
+export type PageFunctionAll<Arg, R> = string | ((elements: any[], arg: Arg) => R);
+
+/** Locators passed as `arg` are resolved to their element; other values must be JSON. */
+export async function serializeArg(arg: unknown): Promise<unknown> {
+  if (arg instanceof Locator) return { handle: await arg.handle() };
+  return arg === undefined ? null : arg;
 }
 
 interface Requirements {
   visible?: boolean;
   enabled?: boolean;
+  editable?: boolean;
   stable?: boolean;
   receivesEvents?: boolean;
 }
 
-/** Quotes @p text for use in a selector (text="..."). */
-export function quote(text: string): string {
-  return JSON.stringify(text);
-}
+export { quote, textSelector } from './selectors';
 
 function sameRect(a?: Rect, b?: Rect): boolean {
   return !!a && !!b && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
@@ -73,22 +108,75 @@ export class Locator {
   constructor(
     readonly app: QtApp,
     readonly selector: string,
+    /** Human-readable description (see describe(description)). */
+    readonly description?: string,
   ) {}
 
   toString(): string {
-    return `locator(${quote(this.selector)})`;
+    return this.description ? `${this.description} (locator(${quote(this.selector)}))` : `locator(${quote(this.selector)})`;
+  }
+
+  private derive(selector: string): Locator {
+    return new Locator(this.app, selector);
   }
 
   // --- composition -----------------------------------------------------------------
 
   /** Elements matching @p selector below the elements matched by this locator. */
-  locator(selector: string): Locator {
-    return new Locator(this.app, `${this.selector} >> ${selector}`);
+  locator(selector: string | Locator, options: FilterOptions = {}): Locator {
+    const sub = selector instanceof Locator ? selector.selector : selector;
+    return this.derive(`${this.selector} >> ${sub}`).filter(options);
   }
 
-  /** Elements below this one whose text matches. */
+  /** Elements below this one whose text matches (case-insensitive substring unless exact). */
   getByText(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
     return this.locator(textSelector(text, options.exact));
+  }
+
+  /** Elements by accessibility role and name, like Playwright's getByRole. */
+  getByRole(role: AriaRole | string, options: ByRoleOptions = {}): Locator {
+    return this.locator(roleSelector(role, options));
+  }
+
+  /** Inputs by their label (QLabel buddy / form label, Accessible.name or the control's own text). */
+  getByLabel(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
+    return this.locator(labelSelector(text, options.exact));
+  }
+
+  /** Inputs by placeholder text (placeholderText property). */
+  getByPlaceholder(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
+    return this.locator(propertySelector('placeholderText', text, options.exact));
+  }
+
+  /** Elements by tooltip (toolTip property, the closest thing to a title attribute). */
+  getByTitle(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
+    return this.locator(propertySelector('toolTip', text, options.exact));
+  }
+
+  /** Elements by test id: the property set with app.setTestIdAttribute() (default objectName). */
+  getByTestId(testId: string | RegExp): Locator {
+    return this.locator(propertySelector(this.app.testIdAttribute, testId, true));
+  }
+
+  /** Narrows the matches, like Playwright's locator.filter(). */
+  filter(options: FilterOptions = {}): Locator {
+    let s = this.selector;
+    if (options.hasText !== undefined) s += ` >> hasText=${textValue(options.hasText)}`;
+    if (options.hasNotText !== undefined) s += ` >> hasNotText=${textValue(options.hasNotText)}`;
+    if (options.has) s += ` >> has=${quote(options.has.selector)}`;
+    if (options.hasNot) s += ` >> hasNot=${quote(options.hasNot.selector)}`;
+    if (options.visible !== undefined) s += ` >> visible=${options.visible}`;
+    return s === this.selector ? this : this.derive(s);
+  }
+
+  /** Elements matching both this and @p other. */
+  and(other: Locator): Locator {
+    return this.derive(`${this.selector} >> and=${quote(other.selector)}`);
+  }
+
+  /** Elements matching either this or @p other (in document order). */
+  or(other: Locator): Locator {
+    return this.derive(`${this.selector} >> or=${quote(other.selector)}`);
   }
 
   first(): Locator {
@@ -101,12 +189,12 @@ export class Locator {
 
   /** The n-th match (0-based; negative counts from the end). */
   nth(index: number): Locator {
-    return new Locator(this.app, `${this.selector} >> nth=${index}`);
+    return this.derive(`${this.selector} >> nth=${index}`);
   }
 
   /** Only the visible matches. */
   visible(): Locator {
-    return new Locator(this.app, `${this.selector} >> visible=true`);
+    return this.derive(`${this.selector} >> visible=true`);
   }
 
   // --- resolution --------------------------------------------------------------------
@@ -184,6 +272,9 @@ export class Locator {
           if (!state.attached) return waitingFor('element was detached');
           if (req.visible && !state.visible) return waitingFor('element is not visible');
           if (req.enabled && !state.enabled) return waitingFor('element is not enabled');
+          if (req.editable && state.editable === -1)
+            throw new Error(`${this}: ${describeRef(elements[0])} is not an editable element (no readOnly/editable property)`);
+          if (req.editable && state.editable === 0) return waitingFor('element is not editable');
           if (req.stable && state.hasGeometry) {
             // stable = same bounding box over two checks one frame apart
             await sleep(16);
@@ -199,6 +290,7 @@ export class Locator {
           if (needsHitTest && state.blockedBy) return waitingFor(`element does not receive pointer events, ${state.blockedBy} intercepts them`);
         }
 
+        if (options.trial) return { done: true, value: undefined as T };
         try {
           const value = await perform(handle);
           if (this.app.slowMo) await sleep(this.app.slowMo);
@@ -226,6 +318,7 @@ export class Locator {
         ...this.pointerParams(options),
         button: options.button,
         clickCount: options.clickCount ?? 1,
+        delay: options.delay,
       }),
     );
   }
@@ -245,7 +338,7 @@ export class Locator {
 
   /** Focuses the element, selects all its text, and types @p value with real key events. */
   async fill(value: string, options: ActionOptions = {}): Promise<void> {
-    await this.act('fill', options, { visible: true, enabled: true }, (handle) =>
+    await this.act('fill', options, { visible: true, enabled: true, editable: true }, (handle) =>
       this.app.connection.call('fill', { handle, text: value }),
     );
   }
@@ -256,14 +349,20 @@ export class Locator {
   }
 
   /** Focuses the element and types @p text key by key (without clearing). */
-  async pressSequentially(text: string, options: ActionOptions = {}): Promise<void> {
-    await this.act('pressSequentially', options, { visible: true, enabled: true }, (handle) =>
-      this.app.connection.call('type', { handle, text }),
-    );
+  async pressSequentially(text: string, options: TypeOptions = {}): Promise<void> {
+    await this.act('pressSequentially', options, { visible: true, enabled: true }, async (handle) => {
+      if (!options.delay || text.length < 2) return this.app.connection.call('type', { handle, text });
+      // focus once, then key by key with the requested delay
+      await this.app.connection.call('type', { handle, text: text[0] });
+      for (const ch of text.slice(1)) {
+        await sleep(options.delay);
+        await this.app.connection.call('type', { text: ch });
+      }
+    });
   }
 
   /** Alias of pressSequentially(). */
-  async type(text: string, options: ActionOptions = {}): Promise<void> {
+  async type(text: string, options: TypeOptions = {}): Promise<void> {
     await this.pressSequentially(text, options);
   }
 
@@ -279,6 +378,90 @@ export class Locator {
     await this.act('scrollIntoViewIfNeeded', options, { visible: true }, (handle) =>
       this.app.connection.call('scrollIntoView', { handle }),
     );
+  }
+
+  /** Removes keyboard focus from the element. */
+  async blur(options: TimeoutOptions = {}): Promise<void> {
+    await step(`${this}.blur`, async () => {
+      await this.app.connection.call('blur', { handle: await this.handle(options) });
+    });
+  }
+
+  /** Taps the element with a (synthetic) touch screen. */
+  async tap(options: PointerOptions = {}): Promise<void> {
+    await this.act('tap', options, { visible: true, enabled: true, stable: true, receivesEvents: true }, (handle) =>
+      this.app.connection.call('tap', { handle, position: options.position }),
+    );
+  }
+
+  /** Focuses the element and selects all its text. */
+  async selectText(options: ActionOptions = {}): Promise<void> {
+    await this.act('selectText', options, { visible: true }, async (handle) => {
+      await this.app.connection.call('focus', { handle });
+      try {
+        await this.app.connection.call('invokeMethod', { handle, method: 'selectAll', args: [] });
+      } catch (e) {
+        if (!(e instanceof QtError && e.code === ErrorCode.NotFound)) throw e;
+        await this.app.connection.call('press', { handle, key: 'Control+A' });
+      }
+    });
+  }
+
+  /**
+   * Selects an option of a QComboBox or QML ComboBox like a user: opens the popup and
+   * clicks the item. Strings match the item text (label) or, failing that, its value
+   * (item data / valueRole). Returns the selected labels.
+   */
+  async selectOption(values: SelectOption | SelectOption[], options: ActionOptions = {}): Promise<string[]> {
+    const wanted = Array.isArray(values) ? values : [values];
+    if (wanted.length !== 1) throw new Error(`${this}.selectOption: Qt combo boxes select exactly one option`);
+    const option = typeof wanted[0] === 'string' ? { label: wanted[0], value: wanted[0] } : wanted[0];
+    return step(`${this}.selectOption`, async () => {
+      const info = await this.describe({ timeout: options.timeout });
+      if (info.typeNames.includes('QComboBox')) {
+        return this.act('selectOption', options, { visible: true, enabled: true, stable: true, receivesEvents: true }, async (handle) => {
+          const attempts = option.index !== undefined ? [{ index: option.index }] : [
+            ...(option.label !== undefined ? [{ label: option.label }] : []),
+            ...(option.value !== undefined ? [{ value: option.value }] : []),
+          ];
+          let lastError: unknown;
+          for (const params of attempts) {
+            try {
+              const r = await this.app.connection.call<{ selected: string[] }>('selectOption', { handle, ...params });
+              return r.selected;
+            } catch (e) {
+              if (!(e instanceof QtError && e.code === ErrorCode.NotFound)) throw e;
+              lastError = e;
+            }
+          }
+          throw lastError;
+        });
+      }
+      if (info.typeNames.includes('QQuickComboBox')) {
+        let index = option.index ?? -1;
+        if (index < 0 && option.label !== undefined) index = await this.invoke<number>('find', option.label);
+        if (index < 0 && option.value !== undefined) index = await this.invoke<number>('indexOfValue', option.value);
+        if (index < 0) throw new Error(`${this}.selectOption: no option matches ${JSON.stringify(wanted[0])}`);
+        const label = await this.invoke<string>('textAt', index);
+        await this.click(options);
+        // the popup's list delegates are ordinary items below the combo box's Popup
+        await this.locator('Popup').getByText(label, { exact: true }).visible().click(options);
+        return [label];
+      }
+      throw new Error(`${this}.selectOption: ${info.type} is not a QComboBox or QML ComboBox`);
+    });
+  }
+
+  /**
+   * Qt adaptation of setInputFiles(): clicks the element (a button opening a file dialog),
+   * waits for the file dialog and chooses @p files in it.
+   */
+  async setInputFiles(files: string | string[], options: ClickOptions = {}): Promise<void> {
+    await step(`${this}.setInputFiles`, async () => {
+      const chooser = this.app.waitForFileChooser({ timeout: options.timeout });
+      await this.click(options);
+      await (await chooser).setFiles(files);
+    });
   }
 
   /** Gives keyboard focus to the element. */
@@ -431,10 +614,54 @@ export class Locator {
     return info.visible && info.geometry ? info.geometry : null;
   }
 
-  /** Full description of the element (type names, ids, text, state, geometry). */
-  async describe(options: TimeoutOptions = {}): Promise<ElementInfo> {
+  /**
+   * describe(): full description of the element (types, ids, text, role, state, geometry).
+   * describe(text): like Playwright, a copy of this locator labeled with @p text in errors/traces.
+   */
+  describe(options?: TimeoutOptions): Promise<ElementInfo>;
+  describe(description: string): Locator;
+  describe(arg: TimeoutOptions | string = {}): Promise<ElementInfo> | Locator {
+    if (typeof arg === 'string') return new Locator(this.app, this.selector, arg);
+    return this.handle(arg).then((handle) => this.app.connection.call<ElementInfo>('describe', { handle }));
+  }
+
+  /** Accessibility tree of the element as YAML, like Playwright's ariaSnapshot(). */
+  async ariaSnapshot(options: TimeoutOptions = {}): Promise<string> {
     const handle = await this.handle(options);
-    return this.app.connection.call<ElementInfo>('describe', { handle });
+    const r = await this.app.connection.call<{ nodes: AriaNode[] }>('ariaSnapshot', { handle });
+    return renderAriaSnapshot(r.nodes);
+  }
+
+  /**
+   * Runs @p fn inside the application with the element as first argument: a JavaScript
+   * wrapper of the QObject (properties, slots, Q_INVOKABLEs, signals). QML elements are
+   * evaluated by their own QML engine. Returns the JSON-converted result.
+   *
+   *   await locator.evaluate((el, suffix) => el.text + suffix, '!')
+   */
+  async evaluate<R = any, Arg = unknown>(fn: PageFunction<Arg, R>, arg?: Arg, options: TimeoutOptions = {}): Promise<R> {
+    return step(`${this}.evaluate`, async () => {
+      const handle = await this.handle(options);
+      const r = await this.app.connection.call<{ value: R }>('evaluate', {
+        handle,
+        function: fn.toString(),
+        arg: await serializeArg(arg),
+      });
+      return r.value;
+    });
+  }
+
+  /** Like evaluate(), with an array of all matching elements (no waiting, may be empty). */
+  async evaluateAll<R = any, Arg = unknown>(fn: PageFunctionAll<Arg, R>, arg?: Arg): Promise<R> {
+    return step(`${this}.evaluateAll`, async () => {
+      const handles = (await this.elements()).map((e) => e.handle);
+      const r = await this.app.connection.call<{ value: R }>('evaluate', {
+        handles,
+        function: fn.toString(),
+        arg: await serializeArg(arg),
+      });
+      return r.value;
+    });
   }
 
   /** Waits for the element to reach @p state (default "visible"). */
@@ -461,7 +688,15 @@ export class Locator {
   /** PNG screenshot of the element (or its window). */
   async screenshot(options: ScreenshotOptions = {}): Promise<Buffer> {
     return this.act('screenshot', options, { visible: true, stable: true }, async (handle) => {
-      const r = await this.app.connection.call<{ png: string }>('screenshot', { handle, window: !!options.window });
+      const mask: number[] = [];
+      for (const m of options.mask ?? []) for (const e of await m.elements()) mask.push(e.handle);
+      const r = await this.app.connection.call<{ png: string }>('screenshot', {
+        handle,
+        window: !!options.window,
+        mask,
+        maskColor: options.maskColor,
+        caret: options.caret,
+      });
       const buf = Buffer.from(r.png, 'base64');
       if (options.path) await writeFile(options.path, buf);
       return buf;
@@ -490,10 +725,4 @@ export class Locator {
     const r = await this.app.connection.call<{ spyId: number }>('spy', { handle, signal });
     return new SignalSpy(this.app, r.spyId, `${this}.${signal}`);
   }
-}
-
-export function textSelector(text: string | RegExp, exact?: boolean): string {
-  // RegExp.source already escapes '/'; the selector engine supports the i, s and m flags
-  if (text instanceof RegExp) return `text=/${text.source}/${text.flags.replace(/[^ism]/g, '')}`;
-  return exact === false ? `text=${text}` : `text=${quote(text)}`;
 }

@@ -68,6 +68,8 @@ export interface LaunchOptions extends CommonOptions {
   printOutput?: boolean;
   /** Default timeout of the returned app (actions, waits, assertions). */
   defaultTimeout?: number;
+  /** Timeout of expect() assertions (default: defaultTimeout). */
+  expectTimeout?: number;
   /** Slows down every action by this many milliseconds (handy for watching or recording). */
   slowMo?: number;
   /** Record a video of the session into `dir` (see QtApp.video()), like Playwright's recordVideo. */
@@ -174,6 +176,7 @@ export async function launch(appPath: string, args: string[] = [], options: Laun
     const app = new QtApp(connection, info, { launcher, output: () => output });
     if (options.defaultTimeout) app.setDefaultTimeout(options.defaultTimeout);
     app.slowMo = options.slowMo ?? 0;
+    app.expectTimeout = options.expectTimeout;
     if (options.recordVideo) {
       const { dir, format, ...videoOptions } = options.recordVideo;
       const path = join(dir, `${randomUUID()}.${format ?? 'mp4'}`);

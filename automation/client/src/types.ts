@@ -33,6 +33,12 @@ export interface ElementInfo extends ElementRef {
   enabled: boolean;
   /** Bounding box in global (screen) coordinates. */
   geometry?: Rect;
+  /** ARIA-style role from Qt's accessibility interface (e.g. "button", "textbox"). */
+  role?: string;
+  accessibleName?: string;
+  accessibleDescription?: string;
+  /** -1: not an input, 0: read-only or disabled, 1: editable */
+  editable?: number;
 }
 
 export type MouseButton = 'left' | 'right' | 'middle';
@@ -46,6 +52,8 @@ export interface TimeoutOptions {
 export interface ActionOptions extends TimeoutOptions {
   /** Skip the actionability checks (visible, enabled, stable, receives events). */
   force?: boolean;
+  /** Only perform the actionability checks, not the action itself. */
+  trial?: boolean;
 }
 
 export interface PointerOptions extends ActionOptions {
@@ -57,7 +65,17 @@ export interface PointerOptions extends ActionOptions {
 export interface ClickOptions extends PointerOptions {
   button?: MouseButton;
   clickCount?: number;
+  /** Milliseconds between mouse press and release. */
+  delay?: number;
 }
+
+export interface TypeOptions extends ActionOptions {
+  /** Milliseconds between key presses. */
+  delay?: number;
+}
+
+/** An option for selectOption(): matched by label or value when given as a string. */
+export type SelectOption = string | { label?: string; value?: string; index?: number };
 
 export interface ScrollOptions extends PointerOptions {
   /** Horizontal wheel delta in Qt angle units (120 = one notch); positive scrolls right. */
@@ -78,6 +96,11 @@ export interface DragOptions extends ActionOptions {
 }
 
 export interface ScreenshotOptions extends TimeoutOptions {
+  /** Elements to paint over with `maskColor` (default #ff00ff). */
+  mask?: import('./locator').Locator[];
+  maskColor?: string;
+  /** 'hide' keeps the text cursor steady so screenshots are reproducible. */
+  caret?: 'hide' | 'initial';
   /** Write the PNG to this file as well. */
   path?: string;
   /** Capture the element's whole window instead of just the element. */

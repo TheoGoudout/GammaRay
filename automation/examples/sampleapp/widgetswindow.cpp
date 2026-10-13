@@ -4,6 +4,9 @@
 #include "widgetswindow.h"
 
 #include <QCheckBox>
+#include <QComboBox>
+#include <QFileDialog>
+#include <QMessageBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -32,7 +35,7 @@ WidgetsWindow::WidgetsWindow(QWidget *parent)
 {
     setObjectName(QStringLiteral("widgetsWindow"));
     setWindowTitle(QStringLiteral("Widgets Demo"));
-    resize(460, 720);
+    resize(460, 860);
 
     auto layout = new QVBoxLayout(this);
 
@@ -50,6 +53,7 @@ WidgetsWindow::WidgetsWindow(QWidget *parent)
     m_remember->setObjectName(QStringLiteral("rememberMe"));
     m_loginButton = new QPushButton(QStringLiteral("&Login"), loginBox);
     m_loginButton->setObjectName(QStringLiteral("loginButton"));
+    m_loginButton->setToolTip(QStringLiteral("Log in with your account"));
     m_status = new QLabel(QStringLiteral("Please log in"), loginBox);
     m_status->setObjectName(QStringLiteral("statusLabel"));
     form->addRow(QStringLiteral("User:"), m_username);
@@ -108,6 +112,52 @@ WidgetsWindow::WidgetsWindow(QWidget *parent)
     });
     layout->addWidget(m_volume);
     layout->addWidget(m_volumeLabel);
+
+    // --- combo box, file dialog, message box, read-only field ---
+    auto extras = new QFormLayout;
+    auto color = new QComboBox(this);
+    color->setObjectName(QStringLiteral("colorCombo"));
+    color->addItem(QStringLiteral("Red"), QStringLiteral("r"));
+    color->addItem(QStringLiteral("Green"), QStringLiteral("g"));
+    color->addItem(QStringLiteral("Blue"), QStringLiteral("b"));
+    auto colorLabel = new QLabel(QStringLiteral("No color chosen"), this);
+    colorLabel->setObjectName(QStringLiteral("colorLabel"));
+    // only reacts to the user picking an item (activated), not to programmatic changes
+    connect(color, &QComboBox::activated, this, [color, colorLabel](int index) {
+        colorLabel->setText(QStringLiteral("Color: %1 (%2)").arg(color->itemText(index), color->itemData(index).toString()));
+    });
+    extras->addRow(QStringLiteral("Color:"), color);
+    extras->addRow(colorLabel);
+
+    auto fileButton = new QPushButton(QStringLiteral("Choose file..."), this);
+    fileButton->setObjectName(QStringLiteral("fileButton"));
+    auto fileLabel = new QLabel(QStringLiteral("No file"), this);
+    fileLabel->setObjectName(QStringLiteral("fileLabel"));
+    connect(fileButton, &QPushButton::clicked, this, [this, fileLabel]() {
+        const QString file = QFileDialog::getOpenFileName(this, QStringLiteral("Choose a file"), QString(), QString(), nullptr,
+                                                          QFileDialog::DontUseNativeDialog);
+        fileLabel->setText(file.isEmpty() ? QStringLiteral("No file") : QStringLiteral("File: %1").arg(file));
+    });
+    auto resetButton = new QPushButton(QStringLiteral("Reset..."), this);
+    resetButton->setObjectName(QStringLiteral("resetButton"));
+    connect(resetButton, &QPushButton::clicked, this, [this]() {
+        if (QMessageBox::question(this, QStringLiteral("Reset"), QStringLiteral("Reset the login form?")) == QMessageBox::Yes) {
+            resetForm();
+            m_status->setText(QStringLiteral("Form reset"));
+        } else {
+            m_status->setText(QStringLiteral("Reset cancelled"));
+        }
+    });
+    auto buttons = new QHBoxLayout;
+    buttons->addWidget(fileButton);
+    buttons->addWidget(resetButton);
+    extras->addRow(buttons);
+    extras->addRow(fileLabel);
+    auto serial = new QLineEdit(QStringLiteral("QTPW-0001"), this);
+    serial->setObjectName(QStringLiteral("serialField"));
+    serial->setReadOnly(true);
+    extras->addRow(QStringLiteral("Serial:"), serial);
+    layout->addLayout(extras);
 
     auto hover = new HoverLabel(QStringLiteral("Not hovered"), this);
     hover->setObjectName(QStringLiteral("hoverLabel"));

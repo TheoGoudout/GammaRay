@@ -3,12 +3,26 @@
 
 import type { ChildProcess } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
+import { renderAriaSnapshot, type AriaNode } from './aria';
 import { Connection } from './connection';
+import { Dialog, FileChooser, findDialogs, isFileDialog } from './dialogs';
+import { Keyboard, Mouse, Touchscreen } from './input';
 import { step } from './instrumentation';
-import { Locator, textSelector } from './locator';
-import { Video, type VideoOptions } from './video';
+import { Locator, serializeArg } from './locator';
+import { labelSelector, propertySelector, roleSelector, textSelector, type AriaRole, type ByRoleOptions } from './selectors';
+import { Tracing } from './tracing';
 import type { ElementInfo, ElementRef, ScreenshotOptions, TimeoutOptions } from './types';
+import { Video, type VideoOptions } from './video';
 import { poll, sleep } from './wait';
+
+export interface AppScreenshotOptions extends ScreenshotOptions {
+  /** All windows composed into one image (like a full-page screenshot), with title bars. */
+  allWindows?: boolean;
+  /** Keep the text cursor steady instead of blinking (default 'initial': untouched). */
+  caret?: 'hide' | 'initial';
+}
+
+type DialogHandler = (dialog: Dialog) => unknown;
 
 export interface AppInfo {
   protocolVersion: number;
@@ -31,6 +45,18 @@ export class QtApp {
   defaultTimeout = 5_000;
   /** Delay after every action in milliseconds (Playwright's slowMo). */
   slowMo = 0;
+  /** Timeout of expect() assertions; defaults to defaultTimeout. */
+  expectTimeout: number | undefined;
+  /** Property used by getByTestId() (Playwright: selectors.setTestIdAttribute). */
+  testIdAttribute = 'objectName';
+  /** Coordinate-level input, in global (screen) coordinates. */
+  readonly mouse: Mouse;
+  readonly keyboard: Keyboard;
+  readonly touchscreen: Touchscreen;
+  /** Records actions, errors and screenshots into an HTML trace. */
+  readonly tracing: Tracing;
+  private dialogHandlers = new Set<DialogHandler>();
+  private dialogWatcher: Promise<void> | undefined;
   private closed = false;
   private recordedVideo: Video | null = null;
   private videos = new Set<Video>();
@@ -39,7 +65,16 @@ export class QtApp {
     readonly connection: Connection,
     readonly info: AppInfo,
     private readonly owned?: OwnedProcess,
-  ) {}
+  ) {
+    this.mouse = new Mouse(this);
+    this.keyboard = new Keyboard(this);
+    this.touchscreen = new Touchscreen(this);
+    this.tracing = new Tracing(this);
+  }
+
+  toString(): string {
+    return `app(${this.info.appName})`;
+  }
 
   /** Process id of the application. */
   get pid(): number {
@@ -60,9 +95,56 @@ export class QtApp {
     return new Locator(this, selector);
   }
 
-  /** Elements whose text matches (exact by default for strings). */
+  /** Elements whose text matches: case-insensitive substring, or exact with `exact: true`. */
   getByText(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
     return this.locator(textSelector(text, options.exact));
+  }
+
+  /** Elements by accessibility role and name, like Playwright's getByRole. */
+  getByRole(role: AriaRole | string, options: ByRoleOptions = {}): Locator {
+    return this.locator(roleSelector(role, options));
+  }
+
+  /** Inputs by their label (QLabel buddy / form label, Accessible.name or the control's own text). */
+  getByLabel(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
+    return this.locator(labelSelector(text, options.exact));
+  }
+
+  /** Inputs by placeholder text. */
+  getByPlaceholder(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
+    return this.locator(propertySelector('placeholderText', text, options.exact));
+  }
+
+  /** Elements by tooltip (toolTip property). */
+  getByTitle(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
+    return this.locator(propertySelector('toolTip', text, options.exact));
+  }
+
+  /** Elements by test id, i.e. by the testIdAttribute property (default objectName). */
+  getByTestId(testId: string | RegExp): Locator {
+    return this.locator(propertySelector(this.testIdAttribute, testId, true));
+  }
+
+  /** Changes the property getByTestId() matches (Playwright: selectors.setTestIdAttribute). */
+  setTestIdAttribute(property: string): void {
+    this.testIdAttribute = property;
+  }
+
+  /**
+   * Runs @p fn inside the application (in a JavaScript engine with `qApp` bound to the
+   * QCoreApplication) and returns its JSON-converted result, like page.evaluate().
+   */
+  async evaluate<R = any, Arg = unknown>(fn: string | ((arg: Arg) => R), arg?: Arg): Promise<R> {
+    return step('app.evaluate', async () => {
+      const r = await this.connection.call<{ value: R }>('evaluate', { function: fn.toString(), arg: await serializeArg(arg) });
+      return r.value;
+    });
+  }
+
+  /** Accessibility tree of all windows as YAML (Playwright's ARIA snapshot format). */
+  async ariaSnapshot(): Promise<string> {
+    const r = await this.connection.call<{ nodes: AriaNode[] }>('ariaSnapshot', {});
+    return renderAriaSnapshot(r.nodes);
   }
 
   /** Element by objectName or QML id. */
@@ -75,10 +157,11 @@ export class QtApp {
     return (await this.connection.call<{ elements: ElementInfo[] }>('windows')).elements;
   }
 
-  /** PNG screenshot of the focused (or first) window. */
-  async screenshot(options: ScreenshotOptions = {}): Promise<Buffer> {
-    const r = await this.connection.call<{ png: string }>('screenshot', {});
-    const buf = Buffer.from(r.png, 'base64');
+  /** PNG screenshot of the focused (or first) window, or of all windows with `allWindows`. */
+  async screenshot(options: AppScreenshotOptions = {}): Promise<Buffer> {
+    const buf = options.allWindows
+      ? Buffer.from((await this.connection.call<{ image: string }>('screenshotAll', { cursor: false })).image, 'base64')
+      : Buffer.from((await this.connection.call<{ png: string }>('screenshot', { caret: options.caret })).png, 'base64');
     if (options.path) await writeFile(options.path, buf);
     return buf;
   }
@@ -182,6 +265,109 @@ export class QtApp {
   setRecordedVideo(video: Video): void {
     this.recordedVideo = video;
     this.videos.add(video);
+  }
+
+  /** Waits for a dialog (QDialog/QMessageBox window or Qt Quick Dialog) to be shown. */
+  async waitForDialog(options: TimeoutOptions & { predicate?: (d: Dialog) => boolean | Promise<boolean> } = {}): Promise<Dialog> {
+    return poll('waitForDialog', options.timeout ?? this.defaultTimeout, async () => {
+      for (const info of await findDialogs(this)) {
+        if (isFileDialog(info)) continue;
+        const dialog = new Dialog(this, info);
+        if (!options.predicate || (await options.predicate(dialog))) return { done: true, value: dialog };
+      }
+      return { done: false, log: 'waiting for a dialog to be shown' };
+    });
+  }
+
+  /** Waits for a file dialog (QFileDialog or Qt Quick FileDialog) to be shown. */
+  async waitForFileChooser(options: TimeoutOptions = {}): Promise<FileChooser> {
+    return poll('waitForFileChooser', options.timeout ?? this.defaultTimeout, async () => {
+      const found = (await findDialogs(this)).find(isFileDialog);
+      return found ? { done: true, value: new FileChooser(this, found) } : { done: false, log: 'waiting for a file dialog' };
+    });
+  }
+
+  /**
+   * Like page.on('dialog'): calls @p handler for every dialog that is shown while registered.
+   * The handler must accept or dismiss it (Qt dialogs are not dismissed automatically).
+   */
+  on(event: 'dialog', handler: DialogHandler): this;
+  on(event: 'close', handler: () => void): this;
+  on(event: 'dialog' | 'close', handler: DialogHandler | (() => void)): this {
+    if (event === 'close') {
+      this.connection.on('close', handler as () => void);
+      return this;
+    }
+    this.dialogHandlers.add(handler as DialogHandler);
+    this.dialogWatcher ??= this.watchDialogs();
+    return this;
+  }
+
+  off(event: 'dialog' | 'close', handler: DialogHandler | (() => void)): this {
+    if (event === 'close') this.connection.off('close', handler as () => void);
+    else this.dialogHandlers.delete(handler as DialogHandler);
+    return this;
+  }
+
+  private async watchDialogs(): Promise<void> {
+    const seen = new Set<number>();
+    try {
+      while (this.dialogHandlers.size && !this.connection.isClosed) {
+        const current = new Set<number>();
+        for (const info of await findDialogs(this)) {
+          if (isFileDialog(info)) continue;
+          current.add(info.handle);
+          if (seen.has(info.handle)) continue;
+          seen.add(info.handle);
+          const dialog = new Dialog(this, info);
+          for (const h of [...this.dialogHandlers]) await h(dialog);
+        }
+        // a dialog shown again (e.g. QDialog reused) is reported again
+        for (const h of seen) if (!current.has(h)) seen.delete(h);
+        await sleep(50);
+      }
+    } catch {
+      // connection closed
+    } finally {
+      this.dialogWatcher = undefined;
+    }
+  }
+
+  /** Waits for an event, like page.waitForEvent(). */
+  async waitForEvent(event: 'dialog', options?: TimeoutOptions & { predicate?: (d: Dialog) => boolean | Promise<boolean> }): Promise<Dialog>;
+  async waitForEvent(event: 'filechooser', options?: TimeoutOptions): Promise<FileChooser>;
+  async waitForEvent(event: 'objectcreated', options?: TimeoutOptions & { predicate?: (e: ElementRef) => boolean }): Promise<ElementRef>;
+  async waitForEvent(event: 'close', options?: TimeoutOptions): Promise<void>;
+  async waitForEvent(event: string, options: TimeoutOptions & { predicate?: (x: any) => any } = {}): Promise<unknown> {
+    const timeout = options.timeout ?? this.defaultTimeout;
+    switch (event) {
+      case 'dialog':
+        return this.waitForDialog(options);
+      case 'filechooser':
+        return this.waitForFileChooser(options);
+      case 'close':
+        if (this.connection.isClosed) return;
+        return new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(`waitForEvent('close'): Timeout ${timeout}ms exceeded.`)), timeout);
+          this.connection.once('close', () => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
+      case 'objectcreated': {
+        let found: ElementRef | undefined;
+        const stop = await this.onObjectCreated((els) => {
+          found ??= els.find((e) => !options.predicate || options.predicate(e));
+        });
+        try {
+          return await poll("waitForEvent('objectcreated')", timeout, async () => ({ done: !!found, value: found }));
+        } finally {
+          await stop().catch(() => undefined);
+        }
+      }
+      default:
+        throw new Error(`unknown event "${event}"`);
+    }
   }
 
   /** Whether the application process is still running (launched apps only). */

@@ -40,10 +40,12 @@ test.describe('QML login form', () => {
 
   test('QML type selectors', async ({ app }) => {
     const win = app.locator('#qmlWindow');
-    await expect(win.locator('TextField')).toHaveCount(3);
+    // the ComboBox renders its text with an internal TextField: only the ones with a placeholder
+    await expect(win.locator('TextField')).toHaveCount(4);
+    await expect(win.locator('TextField[placeholderText]')).toHaveCount(3);
     await expect(win.locator('TextField[echoMode=Password]')).toHaveCount(1);
     await expect(win.locator('TextField').first()).toHaveProperty('placeholderText', 'User name');
-    await expect(win.locator('TextField').last()).toHaveProperty('placeholderText', 'New todo');
+    await expect(win.locator('TextField[placeholderText]').last()).toHaveProperty('placeholderText', 'New todo');
     expect((await win.locator('TextField').nth(1).describe()).id).toBe('passwordField');
     // base types match too: a Button is an AbstractButton and an Item
     await expect(win.locator('AbstractButton#loginButton')).toHaveCount(1);

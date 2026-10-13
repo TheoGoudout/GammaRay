@@ -2,12 +2,34 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { inspect, isDeepStrictEqual } from 'node:util';
+import { QtApp } from './app';
+import { matchesAriaTemplate, renderAriaSnapshot, type AriaNode } from './aria';
 import { ErrorCode, QtError, TimeoutError } from './errors';
 import { step } from './instrumentation';
-import { Locator } from './locator';
+import { Locator, type Actionability } from './locator';
 import { SignalSpy } from './signalspy';
-import type { TimeoutOptions } from './types';
-import { poll } from './wait';
+import type { ElementInfo, TimeoutOptions } from './types';
+import { poll, sleep } from './wait';
+
+export interface ScreenshotAssertionOptions extends TimeoutOptions {
+  /** Elements to paint over (e.g. clocks, animations). */
+  mask?: Locator[];
+  maskColor?: string;
+  /** Acceptable number / ratio of differing pixels and per-pixel color threshold (0..1). */
+  maxDiffPixels?: number;
+  maxDiffPixelRatio?: number;
+  threshold?: number;
+}
+
+/** Compares a PNG against a stored baseline; throws on mismatch. Provided by the test runner integration. */
+export type ScreenshotComparator = (png: Buffer, name: string | undefined, options: ScreenshotAssertionOptions) => void;
+
+let screenshotComparator: ScreenshotComparator | undefined;
+
+/** Installs the baseline comparison used by toHaveScreenshot() (qt-playwright/test does this). */
+export function setScreenshotComparator(c: ScreenshotComparator | undefined): void {
+  screenshotComparator = c;
+}
 
 /** Thrown when a retrying assertion does not pass within its timeout. */
 export class ExpectError extends Error {
@@ -88,6 +110,50 @@ abstract class BaseAssertions<T> {
   }
 }
 
+/** Waits for two identical consecutive screenshots, then compares with the baseline (retrying). */
+async function assertScreenshot(
+  title: string,
+  timeout: number,
+  take: (remaining: number) => Promise<Buffer>,
+  name: string | undefined,
+  options: ScreenshotAssertionOptions,
+): Promise<void> {
+  const comparator = screenshotComparator;
+  if (!comparator) throw new Error(`${title}: toHaveScreenshot() needs the test runner integration (import from 'qt-playwright/test')`);
+  await step(title, async () => {
+    const deadline = Date.now() + timeout;
+    let previous: Buffer | undefined;
+    let lastError: unknown;
+    for (;;) {
+      const shot = await take(Math.max(0, deadline - Date.now()));
+      if (previous && previous.equals(shot)) {
+        try {
+          comparator(shot, name, options);
+          return;
+        } catch (e) {
+          lastError = e;
+          // a missing baseline was just written: nothing to wait for
+          if (/doesn't exist|writing actual/i.test(String((e as Error).message))) throw e;
+        }
+      }
+      previous = shot;
+      if (Date.now() >= deadline)
+        throw lastError ?? new ExpectError(`${title} failed\n\nScreenshot did not become stable within ${timeout}ms`);
+      await sleep(100);
+    }
+  });
+}
+
+function parseScreenshotArgs(a?: string | ScreenshotAssertionOptions, b?: ScreenshotAssertionOptions) {
+  return typeof a === 'string' ? { name: a, options: b ?? {} } : { name: undefined, options: a ?? {} };
+}
+
+async function maskHandles(mask: Locator[] | undefined): Promise<number[]> {
+  const handles: number[] = [];
+  for (const m of mask ?? []) for (const e of await m.elements()) handles.push(e.handle);
+  return handles;
+}
+
 export class LocatorAssertions extends BaseAssertions<Locator> {
   /** Negates the following assertion. */
   get not(): LocatorAssertions {
@@ -102,10 +168,143 @@ export class LocatorAssertions extends BaseAssertions<Locator> {
   }
 
   private async actionability(handle: number) {
-    return this.subject.app.connection.call<{ attached: boolean; visible?: boolean; enabled?: boolean }>('actionability', {
+    return this.subject.app.connection.call<Actionability>('actionability', {
       handle,
       checkHitTarget: false,
     });
+  }
+
+  private async info(handle: number): Promise<ElementInfo> {
+    return this.subject.app.connection.call<ElementInfo>('describe', { handle });
+  }
+
+  /** Accessible name equals @p name (whitespace-normalized) or matches the RegExp. */
+  async toHaveAccessibleName(name: string | RegExp, options: TimeoutOptions & { ignoreCase?: boolean } = {}): Promise<void> {
+    await this.retry('toHaveAccessibleName', name, options, async () => {
+      const v = await orNotFound(this.subject, async (h) => (await this.info(h)).accessibleName ?? '');
+      const pass = typeof v === 'string' && (options.ignoreCase && typeof name === 'string'
+        ? v.toLowerCase().trim() === name.toLowerCase().trim()
+        : matchesText(v, name, false));
+      return { pass, actual: v };
+    });
+  }
+
+  async toHaveAccessibleDescription(description: string | RegExp, options: TimeoutOptions = {}): Promise<void> {
+    await this.retry('toHaveAccessibleDescription', description, options, async () => {
+      const v = await orNotFound(this.subject, async (h) => (await this.info(h)).accessibleDescription ?? '');
+      return { pass: matchesText(v, description, false), actual: v };
+    });
+  }
+
+  /** ARIA role (derived from the Qt accessibility role), e.g. "button", "textbox". */
+  async toHaveRole(role: string, options: TimeoutOptions = {}): Promise<void> {
+    await this.retry('toHaveRole', role, options, async () => {
+      const v = await orNotFound(this.subject, async (h) => (await this.info(h)).role ?? '');
+      return { pass: v === role, actual: v };
+    });
+  }
+
+  /** objectName or QML id. */
+  async toHaveId(id: string | RegExp, options: TimeoutOptions = {}): Promise<void> {
+    await this.retry('toHaveId', id, options, async () => {
+      const v = await orNotFound(this.subject, (h) => this.info(h));
+      const ids = v === NOT_FOUND ? [] : [v.objectName ?? '', v.id ?? ''];
+      return { pass: ids.some((x) => matchesText(x, id, false) && x !== ''), actual: v === NOT_FOUND ? v : ids.filter(Boolean) };
+    });
+  }
+
+  /** Qt adaptation of toHaveClass(): one of the element's type names (C++ classes, QML types). */
+  async toHaveClass(type: string | RegExp, options: TimeoutOptions = {}): Promise<void> {
+    await this.retry('toHaveClass', type, options, async () => {
+      const v = await orNotFound(this.subject, async (h) => (await this.info(h)).typeNames);
+      const pass = v !== NOT_FOUND && v.some((t) => (type instanceof RegExp ? type.test(t) : t === type));
+      return { pass, actual: v };
+    });
+  }
+
+  /** An enabled input that is not read-only (or the opposite with editable: false). */
+  async toBeEditable(options: TimeoutOptions & { editable?: boolean } = {}): Promise<void> {
+    const want = options.editable ?? true;
+    await this.retry('toBeEditable', want ? undefined : { editable: false }, options, async () => {
+      const v = await orNotFound(this.subject, async (h) => (await this.actionability(h)).editable ?? -1);
+      if (v === -1) throw new ExpectError(`expect(${this.subject}).toBeEditable(): element is not an input (no readOnly/editable property)`);
+      return { pass: v !== NOT_FOUND && (v === 1) === want, actual: v === NOT_FOUND ? v : v === 1 ? 'editable' : 'read-only' };
+    });
+  }
+
+  /** No text: an empty input, or an element without text in itself or its descendants. */
+  async toBeEmpty(options: TimeoutOptions = {}): Promise<void> {
+    await this.retry('toBeEmpty', undefined, options, async () => {
+      const v = await orNotFound(this.subject, async (h) => {
+        const info = await this.info(h);
+        const own = info.text ?? '';
+        // inputs: only their value counts (not placeholder items inside them)
+        if (own.trim() || (info.editable ?? -1) >= 0) return own;
+        const inside = await this.subject.app.connection.call<{ elements: ElementInfo[] }>('query', {
+          selector: 'text=/\\S/',
+          scope: h,
+          describe: true,
+        });
+        return inside.elements.map((e) => e.text).join(' ');
+      });
+      return { pass: v !== NOT_FOUND && !String(v).trim(), actual: v };
+    });
+  }
+
+  /** At least @p ratio (default: any part) of the element is inside its window and scroll viewport. */
+  async toBeInViewport(options: TimeoutOptions & { ratio?: number } = {}): Promise<void> {
+    await this.retry('toBeInViewport', options.ratio !== undefined ? { ratio: options.ratio } : undefined, options, async () => {
+      const v = await orNotFound(this.subject, async (h) => (await this.actionability(h)).viewportRatio ?? 0);
+      const pass = v !== NOT_FOUND && (options.ratio !== undefined ? v >= options.ratio : v > 0);
+      return { pass, actual: v === NOT_FOUND ? v : `visible ratio ${Number(v).toFixed(2)}` };
+    });
+  }
+
+  /** Alias of toHaveProperty() for Playwright familiarity. */
+  async toHaveJSProperty(name: string, value: unknown, options: TimeoutOptions = {}): Promise<void> {
+    await this.toHaveProperty(name, value, options);
+  }
+
+  /** Qt adaptation of toHaveAttribute(): a Qt property, compared as text; without value, it must be truthy. */
+  async toHaveAttribute(name: string, value?: string | RegExp, options: TimeoutOptions = {}): Promise<void> {
+    await this.retry(`toHaveAttribute(${JSON.stringify(name)})`, value, options, async () => {
+      const v = await orNotFound(this.subject, (h) => this.property(h, name).catch(() => undefined));
+      if (v === NOT_FOUND) return { pass: false, actual: v };
+      if (value === undefined) return { pass: v !== undefined && v !== null && v !== false && v !== '', actual: v };
+      const text = typeof v === 'string' ? v : JSON.stringify(v);
+      return { pass: value instanceof RegExp ? value.test(text) : text === value, actual: v };
+    });
+  }
+
+  /** Accessibility tree matches the template (Playwright ARIA snapshot syntax, partial matching). */
+  async toMatchAriaSnapshot(expected: string, options: TimeoutOptions = {}): Promise<void> {
+    await this.retry('toMatchAriaSnapshot', expected, options, async () => {
+      const v = await orNotFound(this.subject, async (h) => {
+        const r = await this.subject.app.connection.call<{ nodes: AriaNode[] }>('ariaSnapshot', { handle: h });
+        return r.nodes;
+      });
+      if (v === NOT_FOUND) return { pass: false, actual: v };
+      return { pass: matchesAriaTemplate(expected, v), actual: renderAriaSnapshot(v) };
+    });
+  }
+
+  /**
+   * Compares a screenshot of the element with a baseline image (stored next to the test;
+   * update with --update-snapshots). Waits for the rendering to be stable first.
+   */
+  async toHaveScreenshot(nameOrOptions?: string | ScreenshotAssertionOptions, maybeOptions?: ScreenshotAssertionOptions): Promise<void> {
+    const { name, options } = parseScreenshotArgs(nameOrOptions, maybeOptions);
+    const timeout = options.timeout ?? this.defaultTimeout;
+    await assertScreenshot(`expect(${this.subject}).toHaveScreenshot`, timeout, async (remaining) => {
+      const handle = await this.subject.handle({ timeout: remaining });
+      const r = await this.subject.app.connection.call<{ png: string }>('screenshot', {
+        handle,
+        caret: 'hide',
+        mask: await maskHandles(options.mask),
+        maskColor: options.maskColor,
+      });
+      return Buffer.from(r.png, 'base64');
+    }, name, options);
   }
 
   async toBeVisible(options: TimeoutOptions = {}): Promise<void> {
@@ -240,12 +439,47 @@ export const expectDefaults = { timeout: 5_000 };
  */
 export function expect(subject: Locator): LocatorAssertions;
 export function expect(subject: SignalSpy): SignalSpyAssertions;
-export function expect(subject: Locator | SignalSpy): LocatorAssertions | SignalSpyAssertions {
-  if (subject instanceof Locator) return new LocatorAssertions(subject, false, subject.app.defaultTimeout);
+export function expect(subject: QtApp): AppAssertions;
+export function expect(subject: Locator | SignalSpy | QtApp): LocatorAssertions | SignalSpyAssertions | AppAssertions {
+  if (subject instanceof Locator)
+    return new LocatorAssertions(subject, false, subject.app.expectTimeout ?? subject.app.defaultTimeout);
+  if (subject instanceof QtApp) return new AppAssertions(subject, false, subject.expectTimeout ?? subject.defaultTimeout);
   if (subject instanceof SignalSpy) return new SignalSpyAssertions(subject, false, expectDefaults.timeout);
-  throw new TypeError('qt-playwright expect() accepts a Locator or a SignalSpy');
+  throw new TypeError('qt-playwright expect() accepts a Locator, a SignalSpy or a QtApp');
 }
 
-export function isQtSubject(v: unknown): v is Locator | SignalSpy {
-  return v instanceof Locator || v instanceof SignalSpy;
+export function isQtSubject(v: unknown): v is Locator | SignalSpy | QtApp {
+  return v instanceof Locator || v instanceof SignalSpy || v instanceof QtApp;
+}
+
+/** Assertions on the whole application (all windows), like expect(page). */
+export class AppAssertions extends BaseAssertions<QtApp> {
+  get not(): AppAssertions {
+    return new AppAssertions(this.subject, !this.isNot, this.defaultTimeout);
+  }
+
+  /** Some visible window has this title (or the focused window, with `focused: true`). */
+  async toHaveTitle(title: string | RegExp, options: TimeoutOptions = {}): Promise<void> {
+    await this.retry('toHaveTitle', title, options, async () => {
+      const titles = (await this.subject.windows()).map((w) => w.text ?? '');
+      return { pass: titles.some((t) => matchesText(t, title, false)), actual: titles };
+    });
+  }
+
+  async toMatchAriaSnapshot(expected: string, options: TimeoutOptions = {}): Promise<void> {
+    await this.retry('toMatchAriaSnapshot', expected, options, async () => {
+      const r = await this.subject.connection.call<{ nodes: AriaNode[] }>('ariaSnapshot', {});
+      return { pass: matchesAriaTemplate(expected, r.nodes), actual: renderAriaSnapshot(r.nodes) };
+    });
+  }
+
+  /** Compares all windows (composed into one image) with a baseline image. */
+  async toHaveScreenshot(nameOrOptions?: string | ScreenshotAssertionOptions, maybeOptions?: ScreenshotAssertionOptions): Promise<void> {
+    const { name, options } = parseScreenshotArgs(nameOrOptions, maybeOptions);
+    const timeout = options.timeout ?? this.defaultTimeout;
+    await assertScreenshot('expect(app).toHaveScreenshot', timeout, async () => {
+      const r = await this.subject.connection.call<{ image: string }>('screenshotAll', { cursor: false, chrome: true });
+      return Buffer.from(r.image, 'base64');
+    }, name, options);
+  }
 }

@@ -11,11 +11,12 @@ test.describe('locators', () => {
   test('selector syntax', async ({ app }) => {
     const w = app.locator('#widgetsWindow');
     // type (C++ class and base classes)
-    await expect(w.locator('QLineEdit')).toHaveCount(3);
-    await expect(w.locator('QAbstractButton')).toHaveCount(4); // 3 push buttons + check box
+    await expect(w.locator('QLineEdit')).toHaveCount(4);
+    await expect(w.locator('QAbstractButton')).toHaveCount(6); // 5 push buttons + check box
     // type + id + property filters; quoted and bare values; != and *=
     await expect(w.locator('QLineEdit#password[echoMode=Password]')).toHaveCount(1);
-    await expect(w.locator('QLineEdit[echoMode!=Password]')).toHaveCount(2);
+    await expect(w.locator('QLineEdit[echoMode!=Password]')).toHaveCount(3);
+    await expect(w.locator('QLineEdit[readOnly]')).toHaveProperty('objectName', 'serialField');
     await expect(w.locator('QPushButton[text*="Rem"]')).toHaveText('Remove');
     await expect(w.locator('QPushButton[text=/^(Add|Remove)$/]')).toHaveCount(2);
     await expect(w.locator('[placeholderText="User name"]')).toHaveProperty('objectName', 'username');
@@ -24,8 +25,9 @@ test.describe('locators', () => {
     await expect(w.locator('#listBox >> QLineEdit')).toHaveCount(1);
     // nth / first / last, as selector segments and as methods
     await expect(w.locator('QPushButton >> nth=1')).toHaveText('Add');
-    await expect(w.locator('QPushButton >> last')).toHaveText('Remove');
-    await expect(w.locator('QPushButton').nth(-2)).toHaveText('Add');
+    await expect(w.locator('#listBox >> QPushButton >> last')).toHaveText('Remove');
+    await expect(w.locator('#listBox >> QPushButton').nth(-2)).toHaveText('Add');
+    await expect(w.locator('QPushButton').last()).toHaveText('Reset...');
     await expect(w.locator('QPushButton').first()).toHaveProperty('objectName', 'loginButton');
     // visibility filter: the QML dialog's buttons exist but are not shown
     const qml = app.locator('#qmlWindow');

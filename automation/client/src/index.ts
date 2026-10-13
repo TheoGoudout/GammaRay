@@ -4,10 +4,24 @@
 export { QtApp, type AppInfo } from './app';
 export { Connection } from './connection';
 export { ConnectionClosedError, ErrorCode, QtError, StrictModeViolationError, TimeoutError } from './errors';
-export { expect, expectDefaults, ExpectError, LocatorAssertions, SignalSpyAssertions } from './expect';
-export { setStepRunner } from './instrumentation';
+export { renderAriaSnapshot, matchesAriaTemplate, parseAriaTemplate, type AriaNode } from './aria';
+export { Dialog, FileChooser } from './dialogs';
+export {
+  AppAssertions,
+  expect,
+  expectDefaults,
+  ExpectError,
+  LocatorAssertions,
+  setScreenshotComparator,
+  SignalSpyAssertions,
+  type ScreenshotAssertionOptions,
+} from './expect';
+export { Keyboard, Mouse, Touchscreen } from './input';
+export { addStepListener, removeStepListener, setStepRunner, type StepListener } from './instrumentation';
 export { attach, DEFAULT_DISABLED_PLUGINS, launch, type AttachOptions, type LaunchOptions } from './launcher';
-export { Locator, quote } from './locator';
+export { Locator, type FilterOptions } from './locator';
+export { quote, roleSelector, textSelector, type AriaRole, type ByRoleOptions } from './selectors';
+export { Tracing, type TracingStartOptions } from './tracing';
 export { SignalSpy } from './signalspy';
 export { Video, type RecordVideoOptions, type VideoOptions } from './video';
 export * from './types';

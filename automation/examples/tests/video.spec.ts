@@ -83,7 +83,7 @@ test.describe('video recording', () => {
     const half = ffprobe(testInfo.outputPath('half.gif'));
     expect(half.codec).toBe('gif');
     expect(half.width).toBe(470); // (460 + 20 + 460) / 2, no title bars
-    expect(half.height).toBe(380);
+    expect(half.height).toBe(430); // the taller widgets window: 860 / 2
   });
 
   test('recordVideo launch option, like Playwright', async ({}, testInfo) => {
