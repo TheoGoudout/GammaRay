@@ -26,7 +26,7 @@ SPDX-License-Identifier = "BSD-3-Clause"
 
 #artwork
 [[annotations]]
-path = ["ui/resources/gammaray/**.png", "plugins/guisupport/images/**.png", "ui/resources/gammaray/ui/icons/classes/**/**.png", "ui/resources/gammaray/ui/**/**/**.png", "docs/manual/**/**.png", "docs/api/**.png", "tests/manual/**.png", "plugins/positioning/**.png", "plugins/quickinspector/textureextension/resources/**.png", "launcher/ui/resources/launcher/**.png", "ui/resources/svg/**.svg", "ui/resources/svg/**.svgz", "plugins/positioning/direction_marker.svg", "ui/resources/gammaray/GammaRay.icns", "ui/resources/gammaray/GammaRay.ico"]
+path = ["ui/resources/gammaray/**.png", "plugins/guisupport/images/**.png", "ui/resources/gammaray/ui/icons/classes/**/**.png", "ui/resources/gammaray/ui/**/**/**.png", "docs/manual/**/**.png", "docs/api/**.png", "tests/manual/**.png", "plugins/positioning/**.png", "plugins/quickinspector/textureextension/resources/**.png", "launcher/ui/resources/launcher/**.png", "ui/resources/svg/**.svg", "ui/resources/svg/**.svgz", "plugins/positioning/direction_marker.svg", "automation/docs/**.png", "automation/docs/**.gif", "ui/resources/gammaray/GammaRay.icns", "ui/resources/gammaray/GammaRay.ico"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "Klarälvdalens Datakonsult AB, a KDAB Group company <info@kdab.com>"
 SPDX-License-Identifier = "GPL-2.0-or-later"

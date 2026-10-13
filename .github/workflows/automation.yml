@@ -47,7 +47,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update -qq
-          sudo apt install -y gdb libgl1-mesa-dev libxkbcommon-dev
+          sudo apt install -y gdb ffmpeg libgl1-mesa-dev libxkbcommon-dev
 
       - name: Install ninja-build tool (must be after Qt due PATH changes)
         uses: turtlesec-no/get-ninja@main

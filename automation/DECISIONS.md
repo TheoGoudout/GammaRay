@@ -138,3 +138,26 @@ option preferred. Newest entries go at the bottom.
 - Center of the element, except for `QCheckBox`/`QRadioButton`. Those only react to
   their indicator and label (`SE_CheckBoxClickRect`), which a layout can move far from
   the center.
+
+## D16. Session video recording
+
+- Options: (a) record in the probe with Qt Multimedia (`QMediaRecorder` with
+  `QWindowCapture`); (b) capture frames in the probe and encode outside the
+  application; (c) screen-capture the display (Xvfb + `ffmpeg -f x11grab`).
+- (a) adds a heavy dependency to the injected application, and window capture backends
+  don't exist on the offscreen platform. (c) needs a real X server, doesn't work
+  offscreen, embedded or on remote targets, and records whatever else is on that screen.
+- **Chosen: (b).** The probe composes the windows itself (`QWidget::grab`,
+  `QQuickWindow::grabWindow`), which works headless and over the network. The client
+  encodes with a system `ffmpeg`. Details:
+   - Frames are only sent when the picture changed, as timestamped JPEGs over binary
+     WebSocket messages. The client resamples them to a constant frame rate, so idle
+     periods cost nothing and the video still plays back in real time.
+   - The canvas size is fixed at start: encoders need constant frame sizes, and a
+     stable picture is easier to watch than one that rescales whenever a window opens.
+   - Window decorations and the mouse pointer are drawn by the recorder, because offscreen
+     windows have neither and a test video without a pointer is hard to follow.
+   - mp4/H.264 is the default rather than Playwright's webm, because it plays everywhere.
+     webm, mkv, mov and gif are also available.
+   - If the client falls behind (more than 64 MB buffered in the app), frames are dropped
+     so a slow consumer cannot exhaust the application's memory.

@@ -19,6 +19,11 @@ the process.
    gammaray --inject-only ... ./app ────────────┘
 ```
 
+![A recorded test session: both windows, title bars and the synthesized mouse pointer](docs/demo.gif)
+
+*A session recorded with `app.startVideo('demo.gif')`. The script is
+`examples/scripts/record-demo.mjs` (slowMo 250 ms).*
+
 | Path | What |
 |------|------|
 | `plugins/automation/` | probe plugin (C++, built with GammaRay when Qt WebSockets is available) |
@@ -27,12 +32,13 @@ the process.
 | `automation/examples/tests/` | example suite exercising every API feature |
 | `automation/run-e2e.sh` | builds everything and runs the suite headless |
 | `ARCHITECTURE_NOTES.md`, `DECISIONS.md` | design background |
+| `PLAYWRIGHT_COMPARISON.md` | what matches Playwright's API, what differs, what is missing or extra |
 
 ## Setup
 
 Requirements: Qt ≥ 6.5 **with the Qt WebSockets module** (GammaRay 3.x is Qt 6 only),
-CMake, a C++17 compiler, Node.js ≥ 18. On Linux, `gdb` is only needed to attach to
-already running processes.
+CMake, a C++17 compiler, Node.js ≥ 18. `ffmpeg` is only needed for video recording.
+On Linux, `gdb` is only needed to attach to already running processes.
 
 1. **Build GammaRay** as usual. If Qt WebSockets is found, the automation plugin is
    built automatically (`-- WARNING: Skipping the automation plugin ...` otherwise):
@@ -177,7 +183,7 @@ more specific selector, scope with `>>`, or use `.first()`, `.last()` or `.nth(i
 
 | | |
 |-|-|
-| `launch(app, args?, options?)` | start under `gammaray --inject-only` with the automation server enabled; options: `env`, `cwd`, `headless`, `gammaray`, `timeout`, `probeAbi`, `injector`, `automationPort`, `disabledPlugins`, `printOutput`, `defaultTimeout` |
+| `launch(app, args?, options?)` | start under `gammaray --inject-only` with the automation server enabled; options: `env`, `cwd`, `headless`, `gammaray`, `timeout`, `probeAbi`, `injector`, `automationPort`, `disabledPlugins`, `printOutput`, `defaultTimeout`, `slowMo`, `recordVideo` |
 | `attach("host:port" \| "ws://...")` | connect to a running automation server, e.g. on a remote/embedded device |
 | `attach(pid)` | inject the probe into a running process (gdb/lldb) and enable automation in it |
 | `app.close()` | disconnect; for launched apps also terminate them |
@@ -185,7 +191,8 @@ more specific selector, scope with `>>`, or use `.first()`, `.last()` or `.nth(i
 | `app.windows()`, `app.screenshot()`, `app.screenshotAllWindows()` | windows |
 | `app.press(key)`, `app.type(text)` | keyboard input to the focused window |
 | `app.waitForObject(sel)`, `app.onObjectCreated(cb)`, `app.onObjectDestroyed(cb)` | object lifecycle events |
-| `app.setDefaultTimeout(ms)`, `app.pid`, `app.info`, `app.output()` | misc |
+| `app.video()`, `app.startVideo(path, options)` | session video recording (see below) |
+| `app.setDefaultTimeout(ms)`, `app.slowMo`, `app.pid`, `app.info`, `app.output()` | misc |
 
 Remote or embedded targets: start the app on the device with
 `GAMMARAY_AUTOMATION_PORT=<port> GAMMARAY_AUTOMATION_ADDRESS=0.0.0.0 gammaray --inject-only ./app`
@@ -249,6 +256,50 @@ assertion passes or the timeout expires. All assertions support `.not`:
 `qt-playwright/test` passes any other value to Playwright's own `expect`. The one from
 `qt-playwright` only accepts Locators and spies.
 
+## Video recording
+
+All visible top-level windows of the application are recorded into one video. Windows
+appear at their screen positions with a title bar each (offscreen windows have no
+decorations), and the synthesized mouse pointer is drawn on top, highlighted while a
+button is pressed. The application sends a frame only when the picture changes. The
+client repeats frames according to their timestamps, so the video plays back in real
+time, and pipes them into `ffmpeg`. The file extension picks the format: `.mp4`
+(H.264, default), `.webm` (VP8), `.mkv`, `.mov` or `.gif`. Set `QT_PLAYWRIGHT_FFMPEG`
+or the `ffmpeg` option if it isn't on the `PATH`.
+
+```ts
+// like Playwright's recordVideo: one file per launched app, finished when it closes
+const app = await launch('./myapp', [], {
+  recordVideo: { dir: 'videos', size: { width: 1280, height: 720 } },
+});
+// ... test ...
+await app.close();
+console.log(await app.video()!.path());
+
+// or on demand, for part of a session
+const video = await app.startVideo('out/checkout.mp4', { fps: 25, scale: 0.5 });
+// ...
+await video.stop();
+```
+
+With the test fixture, use Playwright's own option (or `qtVideo`, which takes precedence):
+
+```ts
+use: { video: 'retain-on-failure' } // 'on' | 'off' | 'retain-on-failure' | 'on-first-retry'
+```
+
+The mp4 is attached to the test and playable in the HTML report. `slowMo` (launch
+option or `qtApp.slowMo`) slows every action down for watchable recordings.
+
+![Frames of a recording: login, slider drag, scrolling, a modal QML dialog](docs/recording-frames.png)
+
+Notes: the canvas is fixed when recording starts (the union of the windows visible
+then), so windows that open later outside of it are clipped. Use `size` to fit large
+desktops into a fixed resolution. Frames are taken with `QWidget::grab()` and
+`QQuickWindow::grabWindow()` at up to `fps` per second on the GUI thread. This costs
+a few milliseconds per frame for typical windows, so lower `fps` or `scale` for heavy
+UIs. Frames are dropped, not buffered, if the client can't keep up.
+
 ## Protocol
 
 The plugin speaks JSON-RPC 2.0 over WebSocket. Any language can drive it. It is
@@ -262,8 +313,11 @@ Methods: `hello`, `query {selector, scope?, describe?}`, `windows`, `describe`,
 `actionability`, `scrollIntoView`, `getProperty`, `getProperties`, `setProperty`,
 `invokeMethod`, `isVisible`, `isEnabled`, `text`, `geometry`, `focus`, `click`,
 `doubleClick`, `hover`, `type`, `fill`, `press`, `scroll`, `drag`, `sync`,
-`screenshot`, `waitForSignal`, `spy`, `spyEvents`, `unspy`, `subscribe`. Notifications:
-`objectsCreated {elements}`, `objectsDestroyed {handles}`. Elements are referred to by
+`screenshot`, `waitForSignal`, `spy`, `spyEvents`, `unspy`, `subscribe`,
+`startRecording`, `stopRecording`. Notifications: `objectsCreated {elements}`,
+`objectsDestroyed {handles}`. Video frames are binary messages: `"QTPW"`, a format
+byte, 3 bytes of padding, uint32 recording id, float64 milliseconds, then the JPEG/PNG
+data, little endian. Elements are referred to by
 stable integer **handles**, which are never reused. A handle to a destroyed object
 fails with error `1001` (stale). See `plugins/automation/automation.cpp` for the
 parameters.
