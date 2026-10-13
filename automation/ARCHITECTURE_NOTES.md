@@ -14,6 +14,11 @@ end-to-end test framework on top of it. File references are relative to the repo
   installed Qt 6.8.3 LTS (`linux_gcc_64`, plus `qtwebsockets`) with `aqtinstall` into
   `/opt/Qt/6.8.3/gcc_64`. GammaRay configures and builds against it with
   `-DCMAKE_PREFIX_PATH=/opt/Qt/6.8.3/gcc_64`.
+- **Baseline test run** (unmodified tree, `QT_QPA_PLATFORM=offscreen ctest`): 51 of 55
+  pass. The four failures (`quickinspectortest`, `quickinspectortest2`,
+  `quicktexturetest`, `quickmaterialtest`) abort with "Failed to initialize graphics
+  backend for OpenGL" because the container has no GL. Their `*_softwarecontext`
+  variants pass. This is the reference for "don't break existing tests".
 - **Optional modules.** Qt WebSockets is *not* a GammaRay dependency today. Qt Test is
   already an optional `find_package` component (`CMakeLists.txt:461`).
 
