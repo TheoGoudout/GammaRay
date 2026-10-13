@@ -1,0 +1,8 @@
+{
+    "hidden": true,
+    "id": "gammaray_automation",
+    "name": "Automation",
+    "types": [
+        "QObject"
+    ]
+}

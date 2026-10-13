@@ -30,6 +30,11 @@ add_subdirectory(wlcompositorinspector)
 
 if(TARGET Qt::Gui)
     add_subdirectory(guisupport)
+    if(TARGET Qt::WebSockets)
+        add_subdirectory(automation)
+    else()
+        message(STATUS "WARNING: Skipping the automation plugin since Qt WebSockets was not found")
+    endif()
     add_subdirectory(textdocumentinspector)
 endif()
 
