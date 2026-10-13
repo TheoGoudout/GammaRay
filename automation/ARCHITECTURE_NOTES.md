@@ -1,5 +1,9 @@
 # GammaRay internals relevant to `qt-playwright` (Phase 0 notes)
 
+> Written before implementation. The resulting design is described in `README.md`, and
+> deviations from the plan below (for example, injecting input without QTest) are
+> recorded in `DECISIONS.md`.
+
 These notes record what I learned reading the GammaRay 3.4 sources before building an
 end-to-end test framework on top of it. File references are relative to the repo root.
 
@@ -19,6 +23,9 @@ end-to-end test framework on top of it. File references are relative to the repo
   `quicktexturetest`, `quickmaterialtest`) abort with "Failed to initialize graphics
   backend for OpenGL" because the container has no GL. Their `*_softwarecontext`
   variants pass. This is the reference for "don't break existing tests".
+- `clientconnectiontest` is timing-sensitive and occasionally fails under `ctest -j4`
+  load. It fails with or without the automation plugin present and passes when run on
+  its own. Upstream CI already excludes it on macOS.
 - **Optional modules.** Qt WebSockets is *not* a GammaRay dependency today. Qt Test is
   already an optional `find_package` component (`CMakeLists.txt:461`).
 
