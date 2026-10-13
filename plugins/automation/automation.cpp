@@ -710,6 +710,11 @@ void AutomationServer::registerHandlers()
         return Element::hasGeometry(o) ? QJsonValue(rectToJson(Element::globalGeometry(o))) : QJsonValue();
     });
 
+    h[QStringLiteral("scrollIntoView")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        if (QObject *obj = resolve(params, reply))
+            reply->ok(QJsonObject { { QStringLiteral("scrolled"), Element::scrollIntoView(obj) } });
+    };
+
     h[QStringLiteral("focus")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
         QObject *obj = resolve(params, reply);
         if (!obj)

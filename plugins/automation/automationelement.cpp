@@ -28,6 +28,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QRadioButton>
+#include <QScrollArea>
 #include <QStyle>
 #include <QStyleOptionButton>
 #include <QWidget>
@@ -445,6 +446,12 @@ QString Element::blockedBy(QObject *obj, QPointF localPos, const QVector<QObject
 
 #ifdef QT_QUICK_LIB
     if (auto item = qobject_cast<QQuickItem *>(obj)) {
+        // pointer events only reach the parts of an item inside all clipping ancestors
+        const QPointF scenePos = item->mapToScene(localPos);
+        for (QQuickItem *p = item->parentItem(); p; p = p->parentItem()) {
+            if (p->clip() && !p->contains(p->mapFromScene(scenePos)))
+                return QStringLiteral("%1 (the point is outside its clipped area)").arg(describe(p));
+        }
         for (QObject *o : allObjects) {
             if (!o->inherits("QQuickPopup") || !o->property("opened").toBool() || !o->property("modal").toBool())
                 continue;
@@ -459,6 +466,58 @@ QString Element::blockedBy(QObject *obj, QPointF localPos, const QVector<QObject
     Q_UNUSED(allObjects);
 #endif
     return QString();
+}
+
+bool Element::scrollIntoView(QObject *obj)
+{
+    bool scrolled = false;
+#ifdef QT_WIDGETS_LIB
+    if (auto w = qobject_cast<QWidget *>(obj)) {
+        for (QWidget *p = w->parentWidget(); p; p = p->parentWidget()) {
+            if (auto area = qobject_cast<QScrollArea *>(p)) {
+                if (area->widget() && area->widget()->isAncestorOf(w)) {
+                    const QPoint before = area->widget()->pos();
+                    area->ensureWidgetVisible(w, 0, 0);
+                    scrolled |= area->widget()->pos() != before;
+                }
+            }
+        }
+        return scrolled;
+    }
+#endif
+#ifdef QT_QUICK_LIB
+    if (auto item = qobject_cast<QQuickItem *>(obj)) {
+        for (QQuickItem *p = item->parentItem(); p; p = p->parentItem()) {
+            if (!p->inherits("QQuickFlickable"))
+                continue;
+            auto content = p->property("contentItem").value<QQuickItem *>();
+            if (!content || !content->isAncestorOf(item))
+                continue;
+            // item rect in content coordinates vs. the currently visible window of the content
+            const QRectF r = item->mapRectToItem(content, QRectF(0, 0, item->width(), item->height()));
+            auto adjust = [&](const char *posProp, const char *originProp, const char *extentProp, qreal viewSize,
+                              qreal itemStart, qreal itemSize) {
+                const qreal pos = p->property(posProp).toReal();
+                const qreal origin = p->property(originProp).toReal();
+                const qreal extent = p->property(extentProp).toReal();
+                qreal target = pos;
+                if (itemStart < pos)
+                    target = itemStart;
+                else if (itemStart + itemSize > pos + viewSize)
+                    target = qMin(itemStart, itemStart + itemSize - viewSize);
+                target = qBound(origin, target, qMax(origin, origin + extent - viewSize));
+                if (!qFuzzyCompare(target + 1.0, pos + 1.0)) {
+                    p->setProperty(posProp, target);
+                    scrolled = true;
+                }
+            };
+            adjust("contentY", "originY", "contentHeight", p->height(), r.y(), r.height());
+            adjust("contentX", "originX", "contentWidth", p->width(), r.x(), r.width());
+        }
+    }
+#endif
+    Q_UNUSED(obj);
+    return scrolled;
 }
 
 bool Element::focus(QObject *obj, QString *error)

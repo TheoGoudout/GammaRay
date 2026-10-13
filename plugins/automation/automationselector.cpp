@@ -350,8 +350,10 @@ Selector Selector::parse(const QString &selector, QString *error)
     error->clear();
     Parser parser(selector);
     const QStringList parts = parser.splitSegments(error);
-    if (!error->isEmpty())
+    if (!error->isEmpty()) {
+        *error = QStringLiteral("invalid selector \"%1\": %2").arg(selector, *error);
         return result;
+    }
     for (const QString &part : parts) {
         Segment seg;
         if (!Parser::parseSegment(part, &seg, error)) {

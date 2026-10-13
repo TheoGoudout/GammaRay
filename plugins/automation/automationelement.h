@@ -81,6 +81,10 @@ QSizeF localSize(const QObject *obj);
  */
 QString blockedBy(QObject *obj, QPointF localPos, const QVector<QObject *> &allObjects);
 
+/*! Scrolls enclosing Flickables / QScrollAreas so that @p obj is fully visible (if possible).
+ *  Returns true if anything was scrolled. */
+bool scrollIntoView(QObject *obj);
+
 /*! Moves keyboard focus to @p obj (and activates its window). */
 bool focus(QObject *obj, QString *error);
 

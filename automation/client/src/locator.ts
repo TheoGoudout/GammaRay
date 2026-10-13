@@ -173,6 +173,8 @@ export class Locator {
 
         if (!force) {
           const needsHitTest = !!req.receivesEvents;
+          // like a user would, scroll enclosing Flickables/scroll areas to reveal the element
+          if (needsHitTest) await this.app.connection.call('scrollIntoView', { handle });
           let state = await this.app.connection.call<Actionability>('actionability', {
             handle,
             position: options.position,
@@ -267,6 +269,13 @@ export class Locator {
   async press(key: string, options: ActionOptions = {}): Promise<void> {
     await this.act('press', options, { visible: true, enabled: true }, (handle) =>
       this.app.connection.call('press', { handle, key }),
+    );
+  }
+
+  /** Scrolls enclosing Flickables / QScrollAreas so the element is fully visible. */
+  async scrollIntoViewIfNeeded(options: ActionOptions = {}): Promise<void> {
+    await this.act('scrollIntoViewIfNeeded', options, { visible: true }, (handle) =>
+      this.app.connection.call('scrollIntoView', { handle }),
     );
   }
 
