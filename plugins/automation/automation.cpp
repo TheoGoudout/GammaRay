@@ -13,6 +13,7 @@
 #include "automation.h"
 #include "automationelement.h"
 #include "automationinput.h"
+#include "automationrecorder.h"
 #include "automationselector.h"
 
 #include <core/probe.h>
@@ -257,6 +258,7 @@ void AutomationServer::socketDisconnected(QWebSocket *socket)
     const auto session = m_sessions.take(socket);
     for (const auto &spy : session.spies)
         delete spy.relay;
+    qDeleteAll(session.recorders);
     socket->deleteLater();
 }
 
@@ -1043,6 +1045,51 @@ void AutomationServer::registerHandlers()
         const qint64 spyId = static_cast<qint64>(params.value(QStringLiteral("spyId")).toDouble());
         delete m_sessions[socket].spies.take(spyId).relay;
         reply->ok();
+    };
+
+    // video recording: frames are streamed as binary messages, see Recorder
+    h[QStringLiteral("startRecording")] = [this](QWebSocket *socket, const QJsonObject &params, const ReplyPtr &reply) {
+        Recorder::Options opts;
+        opts.fps = params.value(QStringLiteral("fps")).toInt(opts.fps);
+        opts.scale = params.value(QStringLiteral("scale")).toDouble(opts.scale);
+        opts.quality = params.value(QStringLiteral("quality")).toInt(opts.quality);
+        opts.chrome = params.value(QStringLiteral("chrome")).toBool(opts.chrome);
+        opts.cursor = params.value(QStringLiteral("cursor")).toBool(opts.cursor);
+        const auto size = params.value(QStringLiteral("size")).toObject();
+        if (!size.isEmpty())
+            opts.size = QSize(size.value(QStringLiteral("width")).toInt(), size.value(QStringLiteral("height")).toInt());
+
+        const QPointer<QWebSocket> target(socket);
+        auto sink = [target](const QByteArray &frame) {
+            // don't let a slow client make the application buffer unbounded amounts of video
+            if (!target || target->bytesToWrite() > 64 * 1024 * 1024)
+                return false;
+            target->sendBinaryMessage(frame);
+            return true;
+        };
+        ProbeGuard guard;
+        auto recorder = new Recorder(m_nextRecordingId++, opts, sink, this);
+        m_sessions[socket].recorders.insert(recorder->id(), recorder);
+        reply->ok(QJsonObject { { QStringLiteral("recordingId"), double(recorder->id()) },
+                                { QStringLiteral("width"), recorder->frameSize().width() },
+                                { QStringLiteral("height"), recorder->frameSize().height() },
+                                { QStringLiteral("fps"), opts.fps },
+                                { QStringLiteral("format"), QString::fromLatin1(recorder->format()) } });
+        // the first frame goes out after the reply, so the client knows the format first
+        recorder->start();
+    };
+
+    h[QStringLiteral("stopRecording")] = [this](QWebSocket *socket, const QJsonObject &params, const ReplyPtr &reply) {
+        const auto id = quint32(params.value(QStringLiteral("recordingId")).toDouble());
+        Recorder *recorder = m_sessions[socket].recorders.take(id);
+        if (!recorder) {
+            reply->fail(NotFound, QStringLiteral("unknown recording %1").arg(id));
+            return;
+        }
+        recorder->stop(); // sends the final frame before our reply
+        reply->ok(QJsonObject { { QStringLiteral("frames"), recorder->framesSent() },
+                                { QStringLiteral("duration"), double(recorder->elapsed()) } });
+        recorder->deleteLater();
     };
 
     h[QStringLiteral("subscribe")] = [this](QWebSocket *socket, const QJsonObject &params, const ReplyPtr &reply) {

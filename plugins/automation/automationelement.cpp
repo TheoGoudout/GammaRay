@@ -599,14 +599,26 @@ QImage Element::grab(QObject *obj, bool wholeWindow, QString *error)
     return QImage();
 }
 
-QVector<QObject *> Element::topLevelWindows()
+QString Element::windowTitle(const QObject *window)
+{
+#ifdef QT_WIDGETS_LIB
+    if (auto w = qobject_cast<const QWidget *>(window))
+        return w->windowTitle();
+#endif
+    if (auto w = qobject_cast<const QWindow *>(window))
+        return w->title();
+    return QString();
+}
+
+QVector<QObject *> Element::topLevelWindows(bool includePopups)
 {
     QVector<QObject *> result;
 #ifdef QT_WIDGETS_LIB
     if (qobject_cast<QApplication *>(QCoreApplication::instance())) {
         const auto widgets = QApplication::topLevelWidgets();
         for (QWidget *w : widgets) {
-            if (w->isWindow() && w->isVisible() && !(w->windowType() == Qt::Popup || w->windowType() == Qt::ToolTip))
+            const bool popup = w->windowType() == Qt::Popup || w->windowType() == Qt::ToolTip;
+            if (w->isWindow() && w->isVisible() && (includePopups || !popup))
                 result.push_back(w);
         }
     }

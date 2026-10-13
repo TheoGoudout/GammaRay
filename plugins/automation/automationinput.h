@@ -47,6 +47,15 @@ void keyPress(QWindow *window, int key, Qt::KeyboardModifiers mods, const QStrin
 /*! No-op for a null @p window. */
 void keyRelease(QWindow *window, int key, Qt::KeyboardModifiers mods, const QString &text);
 
+/*! Where the synthesized mouse pointer currently is (for drawing it into recordings). */
+struct PointerState
+{
+    QWindow *window = nullptr; // null if no pointer input happened yet or the window is gone
+    QPointF pos; // window coordinates
+    Qt::MouseButtons buttons;
+};
+PointerState pointerState();
+
 struct KeySpec
 {
     int key = 0;

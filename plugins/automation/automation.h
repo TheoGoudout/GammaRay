@@ -35,6 +35,7 @@ QT_END_NAMESPACE
 namespace GammaRay {
 namespace Automation {
 class InputQueue;
+class Recorder;
 class SelectorEngine;
 class SignalRelay;
 class Reply;
@@ -68,6 +69,7 @@ private:
         bool objectCreatedEvents = false;
         bool objectDestroyedEvents = false;
         QHash<qint64, Spy> spies;
+        QHash<quint32, Automation::Recorder *> recorders;
     };
 
     void listen();
@@ -103,6 +105,7 @@ private:
     QHash<QString, Handler> m_handlers;
     QHash<QWebSocket *, Session> m_sessions;
     qint64 m_nextSpyId = 1;
+    quint32 m_nextRecordingId = 1;
 
     QTimer m_eventFlushTimer;
     QJsonArray m_pendingCreated;

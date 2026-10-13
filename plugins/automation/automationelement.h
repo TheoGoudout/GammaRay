@@ -91,8 +91,11 @@ bool focus(QObject *obj, QString *error);
 /*! Renders @p obj (or its whole window if @p wholeWindow) to an image. */
 QImage grab(QObject *obj, bool wholeWindow, QString *error);
 
-/*! Visible top-level windows (QWidget windows and QWindows), as QObjects. */
-QVector<QObject *> topLevelWindows();
+/*! Visible top-level windows (QWidget windows and QWindows), as QObjects.
+ *  Popups (menus, combo box lists, tool tips) only with @p includePopups. */
+QVector<QObject *> topLevelWindows(bool includePopups = false);
+/*! The window title of a top-level QWidget or QWindow. */
+QString windowTitle(const QObject *window);
 
 }
 }

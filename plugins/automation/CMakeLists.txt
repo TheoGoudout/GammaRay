@@ -21,6 +21,8 @@ if(NOT GAMMARAY_CLIENT_ONLY_BUILD)
         automationinput.h
         automationjson.cpp
         automationjson.h
+        automationrecorder.cpp
+        automationrecorder.h
         automationselector.cpp
         automationselector.h
     )

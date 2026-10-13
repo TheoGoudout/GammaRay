@@ -18,6 +18,7 @@
 #include <QStyleHints>
 #include <QWindow>
 
+#include <private/qguiapplication_p.h>
 #include <private/qhighdpiscaling_p.h>
 #include <qpa/qwindowsysteminterface.h>
 
@@ -35,9 +36,11 @@ namespace {
 int s_timestamp = 1000;
 Qt::MouseButtons s_buttons;
 QPointer<QWindow> s_hoveredWindow;
+QPointF s_pointerPos;
 
 void updateHoveredWindow(QWindow *window, QPointF pos)
 {
+    s_pointerPos = pos;
     if (s_hoveredWindow == window)
         return;
     if (s_hoveredWindow)
@@ -56,12 +59,30 @@ void Input::mouseMove(QWindow *window, QPointF pos, Qt::KeyboardModifiers mods)
                         ++s_timestamp);
 }
 
+// Window managers activate a window when it is clicked; platforms without one
+// (offscreen, eglfs, ...) don't, so keyboard input would keep going to the old window.
+static void activateOnClick(QWindow *window)
+{
+    if (QGuiApplication::focusWindow() == window || window->type() == Qt::Popup || window->type() == Qt::ToolTip
+        || (window->flags() & Qt::WindowDoesNotAcceptFocus)
+        || QGuiApplicationPrivate::instance()->isWindowBlocked(window))
+        return;
+    window->requestActivate();
+    QWindowSystemInterface::flushWindowSystemEvents();
+}
+
 void Input::mousePress(QWindow *window, QPointF pos, Qt::MouseButton button, Qt::KeyboardModifiers mods)
 {
     updateHoveredWindow(window, pos);
+    activateOnClick(window);
     s_buttons |= button;
     qt_handleMouseEvent(window, pos, window->mapToGlobal(pos), s_buttons, button, QEvent::MouseButtonPress, mods,
                         ++s_timestamp);
+}
+
+Input::PointerState Input::pointerState()
+{
+    return PointerState { s_hoveredWindow.data(), s_pointerPos, s_buttons };
 }
 
 void Input::mouseRelease(QWindow *window, QPointF pos, Qt::MouseButton button, Qt::KeyboardModifiers mods,
