@@ -11,6 +11,7 @@
 */
 
 #include "automation.h"
+#include "automationcodegen.h"
 #include "automationelement.h"
 #include "automationinput.h"
 #include "automationrecorder.h"
@@ -31,6 +32,7 @@
 #include <QMetaMethod>
 #include <QMutexLocker>
 #include <QPainter>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QStyleHints>
 #include <QWebSocket>
@@ -274,6 +276,7 @@ void AutomationServer::socketDisconnected(QWebSocket *socket)
     for (const auto &spy : session.spies)
         delete spy.relay;
     qDeleteAll(session.recorders);
+    delete session.codegen;
     socket->deleteLater();
 }
 
@@ -1252,6 +1255,42 @@ void AutomationServer::registerExtendedHandlers()
 {
     auto &h = m_handlers;
 
+    // codegen: record user actions as locator + action, streamed as "codegenAction" notifications
+    h[QStringLiteral("startCodegen")] = [this](QWebSocket *socket, const QJsonObject &, const ReplyPtr &reply) {
+        auto &session = m_sessions[socket];
+        if (session.codegen) {
+            reply->ok();
+            return;
+        }
+        const QPointer<QWebSocket> target(socket);
+        ProbeGuard guard;
+        session.codegen = new ActionRecorder(
+            [this](QObject *obj) { return codegenLocator(obj); },
+            [target](const QJsonObject &action) {
+                if (!target)
+                    return;
+                const QJsonObject msg { { QStringLiteral("jsonrpc"), QStringLiteral("2.0") },
+                                        { QStringLiteral("method"), QStringLiteral("codegenAction") },
+                                        { QStringLiteral("params"), action } };
+                target->sendTextMessage(QString::fromUtf8(QJsonDocument(msg).toJson(QJsonDocument::Compact)));
+            },
+            [this](QObject *obj) {
+                QMutexLocker lock(Probe::objectLock());
+                return accept(obj);
+            },
+            this);
+        reply->ok();
+    };
+    h[QStringLiteral("stopCodegen")] = [this](QWebSocket *socket, const QJsonObject &, const ReplyPtr &reply) {
+        auto &session = m_sessions[socket];
+        if (session.codegen) {
+            session.codegen->flush(); // pending typing is sent before the reply
+            delete session.codegen;
+            session.codegen = nullptr;
+        }
+        reply->ok();
+    };
+
     // locator.evaluate(fn, arg) / evaluateAll / app.evaluate: JavaScript run by Qt's JS engine,
     // with the element(s) exposed as QObject wrappers (properties, slots, invokables, signals)
     h[QStringLiteral("evaluate")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
@@ -1608,4 +1647,108 @@ void AutomationServer::registerExtendedHandlers()
         reply->fail(NotFound, QStringLiteral("not a QComboBox"));
 #endif
     };
+}
+
+// --- codegen -----------------------------------------------------------------------
+
+static QString jsQuote(QString s)
+{
+    s.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    s.replace(QLatin1Char('\''), QStringLiteral("\\'"));
+    s.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
+    return QLatin1Char('\'') + s + QLatin1Char('\'');
+}
+
+static QString selectorQuote(const QString &s)
+{
+    // JSON string escaping is what the selector parser understands
+    const QByteArray json = QJsonDocument(QJsonArray { s }).toJson(QJsonDocument::Compact);
+    return QString::fromUtf8(json.mid(1, json.size() - 2));
+}
+
+/*! The most readable unique locator for @p obj, as TypeScript code and selector. */
+QJsonObject AutomationServer::codegenLocator(QObject *obj)
+{
+    struct Candidate
+    {
+        QString selector;
+        QString code;
+    };
+    QVector<Candidate> candidates;
+    const auto acc = Element::accessible(obj);
+    const bool editable = Element::editableState(obj) >= 0;
+    if (acc.valid && !acc.name.isEmpty() && acc.role != QLatin1String("text") && acc.role != QLatin1String("generic")
+        && acc.role != QLatin1String("window") && acc.role != QLatin1String("group")) {
+        candidates.push_back({ QStringLiteral("role=%1[name=%2i]").arg(acc.role, selectorQuote(acc.name)),
+                               QStringLiteral("getByRole(%1, { name: %2 })").arg(jsQuote(acc.role), jsQuote(acc.name)) });
+        if (editable)
+            candidates.push_back({ QStringLiteral("label=%1i").arg(selectorQuote(acc.name)),
+                                   QStringLiteral("getByLabel(%1)").arg(jsQuote(acc.name)) });
+    }
+    const QString placeholder = obj->property("placeholderText").toString();
+    if (!placeholder.isEmpty())
+        candidates.push_back({ QStringLiteral("[placeholderText=/%1/i]").arg(QRegularExpression::escape(placeholder)),
+                               QStringLiteral("getByPlaceholder(%1)").arg(jsQuote(placeholder)) });
+    // objectName is the natural test id (getByTestId's default attribute); QML ids via #id
+    const QString objectName = obj->objectName();
+    if (!objectName.isEmpty() && !objectName.startsWith(QLatin1String("qt_")))
+        candidates.push_back({ QStringLiteral("[objectName=%1]").arg(selectorQuote(objectName)),
+                               QStringLiteral("getByTestId(%1)").arg(jsQuote(objectName)) });
+    const QString id = Element::qmlId(obj);
+    if (!id.isEmpty())
+        candidates.push_back({ QStringLiteral("#%1").arg(selectorQuote(id)), QStringLiteral("locator(%1)").arg(jsQuote(QLatin1Char('#') + id)) });
+    if (Element::hasText(obj) && !editable) {
+        const QString text = Element::text(obj).remove(QRegularExpression(QStringLiteral("&(?!&)")));
+        if (!text.trimmed().isEmpty())
+            candidates.push_back({ QStringLiteral("text=%1").arg(selectorQuote(text)),
+                                   QStringLiteral("getByText(%1, { exact: true })").arg(jsQuote(text)) });
+    }
+    const QString type = Element::displayTypeName(obj);
+    candidates.push_back({ type, QStringLiteral("locator(%1)").arg(jsQuote(type)) });
+
+    // the window, to disambiguate between windows with similar content
+    QObject *window = nullptr;
+    for (QObject *o = obj; o; o = Element::parent(o)) {
+        const auto windows = Element::topLevelWindows(true);
+        if (windows.contains(o)) {
+            window = o;
+            break;
+        }
+    }
+    QString windowId;
+    if (window) {
+        windowId = Element::qmlId(window);
+        if (windowId.isEmpty())
+            windowId = window->objectName();
+    }
+
+    QMutexLocker lock(Probe::objectLock());
+    auto run = [this](const QString &selector) {
+        QString error;
+        const Selector sel = Selector::parse(selector, &error);
+        return sel.isValid() ? m_engine->query(sel) : QVector<QObject *>();
+    };
+    // 1. globally unique, 2. unique within the window, 3. nth within the window
+    for (const auto &c : std::as_const(candidates)) {
+        const auto found = run(c.selector);
+        if (found.size() == 1 && found.first() == obj)
+            return { { QStringLiteral("code"), QString(QStringLiteral("app.") + c.code) }, { QStringLiteral("selector"), c.selector } };
+    }
+    const QString scope = windowId.isEmpty() ? QString() : QStringLiteral("#%1 >> ").arg(selectorQuote(windowId));
+    const QString scopeCode = windowId.isEmpty() ? QStringLiteral("app.") : QStringLiteral("app.locator(%1).").arg(jsQuote(QLatin1Char('#') + windowId));
+    if (!scope.isEmpty()) {
+        for (const auto &c : std::as_const(candidates)) {
+            const auto found = run(scope + c.selector);
+            if (found.size() == 1 && found.first() == obj)
+                return { { QStringLiteral("code"), QString(scopeCode + c.code) }, { QStringLiteral("selector"), QString(scope + c.selector) } };
+        }
+    }
+    for (const auto &c : std::as_const(candidates)) {
+        const auto found = run(scope + c.selector);
+        const int idx = found.indexOf(obj);
+        if (idx >= 0)
+            return { { QStringLiteral("code"), QStringLiteral("%1%2.nth(%3)").arg(scopeCode, c.code).arg(idx) },
+                     { QStringLiteral("selector"), QStringLiteral("%1%2 >> nth=%3").arg(scope, c.selector).arg(idx) } };
+    }
+    return { { QStringLiteral("code"), QStringLiteral("app.locator(%1)").arg(jsQuote(type)) }, { QStringLiteral("selector"), type } };
 }

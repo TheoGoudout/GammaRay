@@ -4,6 +4,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { renderAriaSnapshot, type AriaNode } from './aria';
+import { CodeRecorder, type RecordedAction } from './codegen';
 import { Connection } from './connection';
 import { Dialog, FileChooser, findDialogs, isFileDialog } from './dialogs';
 import { Keyboard, Mouse, Touchscreen } from './input';
@@ -138,6 +139,30 @@ export class QtApp {
     return step('app.evaluate', async () => {
       const r = await this.connection.call<{ value: R }>('evaluate', { function: fn.toString(), arg: await serializeArg(arg) });
       return r.value;
+    });
+  }
+
+  /**
+   * Starts recording the interactions with the application (real user input as well as
+   * input from this API) as test code, like Playwright's codegen.
+   */
+  async startCodegen(onChange?: (actions: RecordedAction[]) => void): Promise<CodeRecorder> {
+    return CodeRecorder.start(this, onChange);
+  }
+
+  /** Like page.pause(): waits until Enter is pressed in the terminal (no-op without a TTY). */
+  async pause(): Promise<void> {
+    if (!process.stdin.isTTY) {
+      process.stderr.write('app.pause(): no terminal attached, not pausing\n');
+      return;
+    }
+    process.stderr.write(`Paused: inspect ${this.info.appName} (pid ${this.pid}), e.g. with \`gammaray --connect\`. Press Enter to continue.\n`);
+    await new Promise<void>((resolve) => {
+      process.stdin.resume();
+      process.stdin.once('data', () => {
+        process.stdin.pause();
+        resolve();
+      });
     });
   }
 

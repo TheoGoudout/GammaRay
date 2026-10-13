@@ -4,6 +4,9 @@
     "description": "Playwright-style end-to-end testing for Qt (Widgets and Qt Quick) applications, powered by GammaRay",
     "license": "GPL-2.0-or-later",
     "main": "dist/index.js",
+    "bin": {
+        "qt-playwright": "dist/cli.js"
+    },
     "types": "dist/index.d.ts",
     "exports": {
         ".": {

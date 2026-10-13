@@ -29,6 +29,7 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QCheckBox>
+#include <QLabel>
 #include <QRadioButton>
 #include <QScrollArea>
 #include <QStyle>
@@ -770,6 +771,21 @@ Element::AccessibleInfo Element::accessible(QObject *obj)
                 info.description = child->property("description").toString();
         }
     }
+#ifdef QT_WIDGETS_LIB
+    if (info.role == QLatin1String("combobox")) {
+        // Qt names a QComboBox after its current text; like browsers, prefer its <label>
+        if (auto w = qobject_cast<QWidget *>(obj); w && w->parentWidget()) {
+            const auto labels = w->parentWidget()->findChildren<QLabel *>();
+            for (QLabel *label : labels) {
+                if (label->buddy() == w) {
+                    info.value = info.name;
+                    info.name = label->text().remove(QRegularExpression(QStringLiteral("&(?!&)")));
+                    break;
+                }
+            }
+        }
+    }
+#endif
     if (info.name.isEmpty()) {
         // ... then, like browsers do for unlabeled controls, to the visible text or placeholder
         if (editableState(obj) >= 0)

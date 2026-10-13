@@ -13,6 +13,8 @@ if(NOT GAMMARAY_CLIENT_ONLY_BUILD)
     set(gammaray_automation_srcs
         automation.cpp
         automation.h
+        automationcodegen.cpp
+        automationcodegen.h
         automationelement.cpp
         automationelement.h
         automationhandles.cpp

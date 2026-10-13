@@ -34,6 +34,7 @@ QT_END_NAMESPACE
 
 namespace GammaRay {
 namespace Automation {
+class ActionRecorder;
 class InputQueue;
 class Recorder;
 class SelectorEngine;
@@ -70,6 +71,7 @@ private:
         bool objectDestroyedEvents = false;
         QHash<qint64, Spy> spies;
         QHash<quint32, Automation::Recorder *> recorders;
+        Automation::ActionRecorder *codegen = nullptr;
     };
 
     void listen();
@@ -92,6 +94,7 @@ private:
     QPointF positionParam(QObject *obj, const QJsonObject &params, const QString &key = QStringLiteral("position")) const;
 
     QJsonObject accessibilityNode(QObject *obj, int depth);
+    QJsonObject codegenLocator(QObject *obj);
     void registerExtendedHandlers();
 
     // input actions

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 export { QtApp, type AppInfo } from './app';
+export { CodeRecorder, renderAction, type RecordedAction, type RecordedLocator } from './codegen';
 export { Connection } from './connection';
 export { ConnectionClosedError, ErrorCode, QtError, StrictModeViolationError, TimeoutError } from './errors';
 export { renderAriaSnapshot, matchesAriaTemplate, parseAriaTemplate, type AriaNode } from './aria';
