@@ -94,7 +94,8 @@ class InputQueue : public QObject
     Q_OBJECT
 public:
     explicit InputQueue(QObject *parent = nullptr);
-    void enqueue(std::function<void()> step);
+    /*! Runs @p step after the previously queued steps, waiting @p delayMs before it. */
+    void enqueue(std::function<void()> step, int delayMs = 0);
     bool isIdle() const
     {
         return m_steps.empty();
@@ -104,7 +105,7 @@ private:
     void runNext();
 
     QTimer m_timer;
-    std::deque<std::function<void()>> m_steps;
+    std::deque<std::pair<int, std::function<void()>>> m_steps;
 };
 
 }

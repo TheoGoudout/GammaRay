@@ -81,14 +81,15 @@ struct Segment
         HasText, // hasText=...       keep matches whose own or descendants' text matches
         HasNotText, // hasNotText=...
         And, // and="selector"      keep matches also matched by selector
-        Or // or="selector"       add the elements matched by selector
+        Or, // or="selector"       add the elements matched by selector
+        Handle // handle=N            the element with this handle (see HandleRegistry)
     };
     Kind kind = Compound;
     QString type; // empty = any
     QString id; // objectName or QML id
     QVector<AttributeFilter> attributes;
     ValueMatcher text;
-    int nth = 0; // negative counts from the end
+    int nth = 0; // negative counts from the end, also the handle for Handle
     bool visible = true;
     QString role; // Role
     std::shared_ptr<Selector> nested; // Has, HasNot, And, Or
@@ -125,8 +126,9 @@ class SelectorEngine
 public:
     using RootProvider = std::function<QVector<QObject *>()>;
     using ObjectFilter = std::function<bool(QObject *)>;
+    using HandleLookup = std::function<QObject *(qint64)>;
 
-    explicit SelectorEngine(RootProvider roots, ObjectFilter accept = nullptr);
+    explicit SelectorEngine(RootProvider roots, ObjectFilter accept = nullptr, HandleLookup lookup = nullptr);
 
     /*! Matches for @p selector; if @p scope is set the first segment only searches below it. */
     QVector<QObject *> query(const Selector &selector, QObject *scope = nullptr) const;
@@ -143,6 +145,7 @@ private:
 
     RootProvider m_roots;
     ObjectFilter m_accept;
+    HandleLookup m_lookup;
 };
 
 }

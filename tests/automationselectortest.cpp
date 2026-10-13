@@ -107,6 +107,9 @@ private slots:
         QTest::newRow("bad op") << "[a~b]" << "expected '=', '!=', '*=' or ']'";
         QTest::newRow("bad regex") << "text=/(/" << "invalid regular expression";
         QTest::newRow("two ids") << "#a#b" << "multiple ids";
+        QTest::newRow("has unquoted") << "QWidget >> has=#a" << "expects a quoted selector";
+        QTest::newRow("bad nested") << "QWidget >> has=\"[\"" << "unbalanced brackets";
+        QTest::newRow("empty role") << "role=" << "role= expects a role name";
     }
 
     void testParseErrors()
@@ -194,6 +197,38 @@ private slots:
         QCOMPARE(names(query(QStringLiteral("QLabel >> visible=false"))), QStringList { "hiddenLabel" });
         QVERIFY(query(QStringLiteral("#hiddenLabel >> visible=true")).isEmpty());
         QCOMPARE(query(QStringLiteral("QAbstractButton >> visible=true")).size(), 3);
+    }
+
+    void testRoleAndLabel()
+    {
+        QCOMPARE(names(query(QStringLiteral("role=button"))), (QStringList { "ok", "cancel" }));
+        QCOMPARE(names(query(QStringLiteral("role=button[name=\"Log in\"]"))), QStringList { "ok" });
+        // "..."i: case-insensitive substring; Qt role names work too
+        QCOMPARE(names(query(QStringLiteral("role=button[name=\"CANC\"i]"))), QStringList { "cancel" });
+        QCOMPARE(names(query(QStringLiteral("role=editabletext"))), (QStringList { "user", "password" }));
+        QCOMPARE(names(query(QStringLiteral("role=checkbox[checked=true]"))), QStringList { "remember" });
+        QVERIFY(query(QStringLiteral("role=checkbox[checked=false]")).isEmpty());
+        QCOMPARE(names(query(QStringLiteral("role=button[disabled=true]"))), QStringList { "ok" });
+        // hidden elements only with include-hidden
+        QVERIFY(query(QStringLiteral("role=text[name=\"hidden label\"]")).isEmpty());
+        QCOMPARE(names(query(QStringLiteral("role=text[name=\"hidden label\"][include-hidden]"))), QStringList { "hiddenLabel" });
+        // label=: accessible name of inputs (the check box's own text here)
+        QCOMPARE(names(query(QStringLiteral("label=\"remember\"i"))), QStringList { "remember" });
+    }
+
+    void testFilters()
+    {
+        // has / hasNot: descendants matching a nested selector
+        QCOMPARE(names(query(QStringLiteral("QGroupBox >> has=\"#password\""))), QStringList { "box" });
+        QVERIFY(query(QStringLiteral("QGroupBox >> hasNot=\"#password\"")).isEmpty());
+        // hasText: own text or descendants'
+        QCOMPARE(names(query(QStringLiteral("QWidget >> hasText=\"log in\"i >> nth=0"))), QStringList { "window" });
+        QCOMPARE(names(query(QStringLiteral("QPushButton >> hasNotText=/Log/"))), QStringList { "cancel" });
+        // and / or
+        QCOMPARE(names(query(QStringLiteral("QAbstractButton >> and=\"[checked]\""))), QStringList { "remember" });
+        QCOMPARE(names(query(QStringLiteral("#cancel >> or=\"#user\""))), (QStringList { "user", "cancel" })); // document order
+        // or= after an empty step still adds its matches
+        QCOMPARE(names(query(QStringLiteral("#doesNotExist >> or=\"#cancel\""))), QStringList { "cancel" });
     }
 
 #ifdef QT_QUICK_LIB

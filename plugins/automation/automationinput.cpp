@@ -370,21 +370,25 @@ InputQueue::InputQueue(QObject *parent)
     connect(&m_timer, &QTimer::timeout, this, &InputQueue::runNext);
 }
 
-void InputQueue::enqueue(std::function<void()> step)
+void InputQueue::enqueue(std::function<void()> step, int delayMs)
 {
-    m_steps.push_back(std::move(step));
-    if (!m_timer.isActive())
+    m_steps.emplace_back(qMax(0, delayMs), std::move(step));
+    if (!m_timer.isActive()) {
+        m_timer.setInterval(m_steps.front().first);
         m_timer.start();
+    }
 }
 
 void InputQueue::runNext()
 {
     if (m_steps.empty())
         return;
-    auto step = std::move(m_steps.front());
+    auto step = std::move(m_steps.front().second);
     m_steps.pop_front();
     // re-arm first: if the step enters a nested event loop, the queue keeps going in there
-    if (!m_steps.empty())
+    if (!m_steps.empty()) {
+        m_timer.setInterval(m_steps.front().first);
         m_timer.start();
+    }
     step();
 }

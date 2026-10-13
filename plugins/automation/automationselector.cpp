@@ -327,6 +327,14 @@ public:
                 *error = QStringLiteral("nth= expects an integer");
             return ok;
         }
+        if (s.startsWith(QLatin1String("handle="))) {
+            bool ok = false;
+            seg->kind = Segment::Handle;
+            seg->nth = s.mid(7).trimmed().toInt(&ok);
+            if (!ok)
+                *error = QStringLiteral("handle= expects an integer");
+            return ok;
+        }
         if (s.startsWith(QLatin1String("visible="))) {
             const QString v = s.mid(8).trimmed();
             seg->kind = Segment::Visible;
@@ -448,9 +456,10 @@ Selector Selector::parse(const QString &selector, QString *error)
     return result;
 }
 
-SelectorEngine::SelectorEngine(RootProvider roots, ObjectFilter accept)
+SelectorEngine::SelectorEngine(RootProvider roots, ObjectFilter accept, HandleLookup lookup)
     : m_roots(std::move(roots))
     , m_accept(std::move(accept))
+    , m_lookup(std::move(lookup))
 {
 }
 
@@ -628,7 +637,8 @@ bool SelectorEngine::matches(QObject *obj, const Segment &segment)
     case Segment::HasNotText:
     case Segment::And:
     case Segment::Or:
-        return true; // filters, see applyFilter()
+    case Segment::Handle:
+        return true; // filters, see applyFilter() and query()
     case Segment::Compound:
         break;
     }
@@ -791,6 +801,27 @@ QVector<QObject *> SelectorEngine::query(const Selector &selector, QObject *scop
                 current.clear();
             continue;
         }
+        if (seg.kind == Segment::Handle) {
+            QObject *target = m_lookup ? m_lookup(seg.nth) : nullptr;
+            const bool inScope = target && (!m_accept || m_accept(target))
+                && (!scope || (target != scope && Element::isSelfOrDescendantOf(target, scope)));
+            QVector<QObject *> next;
+            if (inScope) {
+                if (!started) {
+                    next.push_back(target);
+                } else {
+                    for (QObject *obj : std::as_const(current)) {
+                        if (target != obj && Element::isSelfOrDescendantOf(target, obj)) {
+                            next.push_back(target);
+                            break;
+                        }
+                    }
+                }
+            }
+            current = next;
+            started = true;
+            continue;
+        }
         if (seg.isFilter()) {
             if (!started) {
                 current = allCandidates(scope);
@@ -822,8 +853,7 @@ QVector<QObject *> SelectorEngine::query(const Selector &selector, QObject *scop
         }
         if (seg.kind == Segment::Text)
             current = dropControlInternals(current);
-        if (current.isEmpty())
-            break;
+        // no early exit on an empty result: a later or= segment can still add matches
     }
     return current;
 }

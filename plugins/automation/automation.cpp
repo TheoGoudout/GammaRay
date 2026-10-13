@@ -193,7 +193,8 @@ AutomationServer::AutomationServer(Probe *probe, QObject *parent)
     m_mapper.fromJson = [this](const QJsonValue &v) {
         return m_handles.object(static_cast<qint64>(v.toObject().value(QStringLiteral("handle")).toDouble()));
     };
-    m_engine.reset(new SelectorEngine([this]() { return roots(); }, [this](QObject *obj) { return accept(obj); }));
+    m_engine.reset(new SelectorEngine([this]() { return roots(); }, [this](QObject *obj) { return accept(obj); },
+                                      [this](qint64 handle) { return m_handles.object(handle); }));
 
     m_eventFlushTimer.setSingleShot(true);
     m_eventFlushTimer.setInterval(0);
@@ -513,6 +514,7 @@ void AutomationServer::enqueueClick(QObject *target, const QJsonObject &params, 
             if (!reply->isDone() && *window)
                 Input::mousePress(*window, *pos, opts.button, opts.modifiers);
         });
+        const int delay = params.value(QStringLiteral("delay")).toInt(0);
         m_input->enqueue([=]() {
             if (reply->isDone())
                 return;
@@ -521,7 +523,8 @@ void AutomationServer::enqueueClick(QObject *target, const QJsonObject &params, 
             if (last)
                 reply->ok();
             Input::mouseRelease(*window, *pos, opts.button, opts.modifiers, last);
-        });
+        },
+                         delay);
     }
 }
 
@@ -1376,6 +1379,27 @@ void AutomationServer::registerExtendedHandlers()
 
     // --- touch ---
     h[QStringLiteral("tap")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        if (!params.contains(QStringLiteral("handle"))) {
+            // touchscreen.tap(x, y) in global coordinates
+            const QPointF global(params.value(QStringLiteral("x")).toDouble(), params.value(QStringLiteral("y")).toDouble());
+            auto window = std::make_shared<QPointer<QWindow>>();
+            auto pos = std::make_shared<QPointF>();
+            m_input->enqueue([=]() {
+                *window = Element::windowAt(global, pos.get());
+                if (!*window) {
+                    reply->fail(NotActionable, QStringLiteral("no window at %1,%2").arg(global.x()).arg(global.y()));
+                    return;
+                }
+                Input::touchPress(*window, *pos);
+            });
+            m_input->enqueue([=]() {
+                if (reply->isDone())
+                    return;
+                reply->ok();
+                Input::touchRelease(*window, *pos);
+            });
+            return;
+        }
         QObject *target = resolve(params, reply);
         if (!target)
             return;
