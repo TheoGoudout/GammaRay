@@ -478,6 +478,20 @@ if(NOT GAMMARAY_CLIENT_ONLY_BUILD)
         target_link_libraries(actiontest gammaray_core Qt::Widgets)
     endif()
 
+    if(TARGET Qt::Widgets AND TARGET Qt::WebSockets)
+        gammaray_add_test(
+            automationselectortest
+            automationselectortest.cpp
+            ${CMAKE_SOURCE_DIR}/plugins/automation/automationelement.cpp
+            ${CMAKE_SOURCE_DIR}/plugins/automation/automationinput.cpp
+            ${CMAKE_SOURCE_DIR}/plugins/automation/automationselector.cpp
+        )
+        target_link_libraries(automationselectortest gammaray_core Qt::Widgets Qt::GuiPrivate)
+        if(TARGET Qt::Quick)
+            target_link_libraries(automationselectortest Qt::Qml Qt::Quick)
+        endif()
+    endif()
+
     if(GAMMARAY_BUILD_UI)
         gammaray_add_probe_test(
             modelinspectortest modelinspectortest.cpp
