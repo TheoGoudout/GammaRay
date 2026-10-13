@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Video, type RecordVideoOptions } from './video';
 import { AppInfo, QtApp } from './app';
 import { Connection } from './connection';
 import { TimeoutError } from './errors';
@@ -65,6 +67,8 @@ export interface LaunchOptions extends CommonOptions {
   printOutput?: boolean;
   /** Default timeout of the returned app (actions, waits, assertions). */
   defaultTimeout?: number;
+  /** Record a video of the session into `dir` (see QtApp.video()), like Playwright's recordVideo. */
+  recordVideo?: RecordVideoOptions;
 }
 
 export interface AttachOptions extends CommonOptions {
@@ -166,6 +170,16 @@ export async function launch(appPath: string, args: string[] = [], options: Laun
     const { connection, info } = await handshake(url, timeout);
     const app = new QtApp(connection, info, { launcher, output: () => output });
     if (options.defaultTimeout) app.setDefaultTimeout(options.defaultTimeout);
+    if (options.recordVideo) {
+      const { dir, format, ...videoOptions } = options.recordVideo;
+      const path = join(dir, `${randomUUID()}.${format ?? 'mp4'}`);
+      try {
+        app.setRecordedVideo(await Video.start(connection, path, videoOptions));
+      } catch (e) {
+        await app.close().catch(() => undefined);
+        throw e;
+      }
+    }
     return app;
   } catch (e) {
     launcher.kill('SIGKILL');

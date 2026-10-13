@@ -25,7 +25,11 @@ export class Connection extends EventEmitter {
 
   private constructor(private readonly ws: WebSocket, readonly url: string) {
     super();
-    ws.on('message', (data) => this.onMessage(data.toString()));
+    ws.on('message', (data, isBinary) => {
+      // binary messages carry recorded video frames
+      if (isBinary) this.emit('binary', data as Buffer);
+      else this.onMessage(data.toString());
+    });
     ws.on('close', () => this.onClose(new ConnectionClosedError(`connection to ${url} closed`)));
     ws.on('error', (err) => this.onClose(new ConnectionClosedError(`connection to ${url} failed: ${err.message}`)));
   }

@@ -9,4 +9,5 @@ export { setStepRunner } from './instrumentation';
 export { attach, DEFAULT_DISABLED_PLUGINS, launch, type AttachOptions, type LaunchOptions } from './launcher';
 export { Locator, quote } from './locator';
 export { SignalSpy } from './signalspy';
+export { Video, type RecordVideoOptions, type VideoOptions } from './video';
 export * from './types';

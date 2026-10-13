@@ -6,6 +6,7 @@ import { writeFile } from 'node:fs/promises';
 import { Connection } from './connection';
 import { step } from './instrumentation';
 import { Locator, textSelector } from './locator';
+import { Video, type VideoOptions } from './video';
 import type { ElementInfo, ElementRef, ScreenshotOptions, TimeoutOptions } from './types';
 import { poll, sleep } from './wait';
 
@@ -29,6 +30,8 @@ export class QtApp {
   /** Default timeout for actions, waits and assertions, in milliseconds. */
   defaultTimeout = 5_000;
   private closed = false;
+  private recordedVideo: Video | null = null;
+  private videos = new Set<Video>();
 
   constructor(
     readonly connection: Connection,
@@ -153,6 +156,30 @@ export class QtApp {
     return locator;
   }
 
+  /**
+   * The video recorded because of the `recordVideo` launch option (like Playwright's
+   * `page.video()`), or null. The file is complete once the app is closed.
+   */
+  video(): Video | null {
+    return this.recordedVideo;
+  }
+
+  /**
+   * Starts recording the application's windows into @p path (.mp4, .webm, .mkv, .mov, .gif).
+   * Call `stop()` on the result, or close the app, to finalize the file.
+   */
+  async startVideo(path: string, options: VideoOptions = {}): Promise<Video> {
+    const video = await Video.start(this.connection, path, options);
+    this.videos.add(video);
+    return video;
+  }
+
+  /** @internal used by launch() for the recordVideo option */
+  setRecordedVideo(video: Video): void {
+    this.recordedVideo = video;
+    this.videos.add(video);
+  }
+
   /** Whether the application process is still running (launched apps only). */
   isRunning(): boolean {
     if (!this.owned) return !this.connection.isClosed;
@@ -167,6 +194,8 @@ export class QtApp {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    // finalize recordings while the application can still deliver the last frames
+    const results = await Promise.allSettled([...this.videos].map((v) => v.stop()));
     this.connection.close();
     if (!this.owned) return;
     const launcher = this.owned.launcher;
@@ -181,6 +210,8 @@ export class QtApp {
       launcher.kill('SIGKILL');
       await exited;
     }
+    const failed = results.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
+    if (failed) throw failed.reason;
   }
 }
 

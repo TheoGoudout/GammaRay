@@ -22,6 +22,7 @@ import { setStepRunner } from './instrumentation';
 import { launch, type LaunchOptions } from './launcher';
 import type { Locator } from './locator';
 import type { SignalSpy } from './signalspy';
+import type { VideoOptions } from './video';
 
 export interface QtAppOptions extends LaunchOptions {
   /** The application to launch. */
@@ -30,6 +31,7 @@ export interface QtAppOptions extends LaunchOptions {
 }
 
 export type ScreenshotMode = 'off' | 'on' | 'only-on-failure';
+export type VideoMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry';
 
 export interface QtFixtures {
   /** The application under test, launched fresh for every test and closed afterwards. */
@@ -41,19 +43,33 @@ export interface QtOptions {
   qtApp: QtAppOptions | undefined;
   /** Attach screenshots of all windows to the test report (default: only-on-failure). */
   qtScreenshot: ScreenshotMode;
+  /**
+   * Record an mp4 of each test and attach it to the report. Defaults to Playwright's own
+   * `video` option, so `use: { video: 'retain-on-failure' }` works as for browsers.
+   */
+  qtVideo: VideoMode | ({ mode: VideoMode } & VideoOptions) | undefined;
 }
 
 export const test = base.extend<QtFixtures & QtOptions>({
   qtApp: [undefined, { option: true }],
   qtScreenshot: ['only-on-failure', { option: true }],
+  qtVideo: [undefined, { option: true }],
 
-  app: async ({ qtApp, qtScreenshot }, use, testInfo) => {
+  app: async ({ qtApp, qtScreenshot, qtVideo, video }, use, testInfo) => {
     if (!qtApp?.executable) throw new Error('qt-playwright: set `use: { qtApp: { executable: ... } }` in playwright.config');
     const { executable, args, ...launchOptions } = qtApp;
     const actionTimeout = testInfo.project.use.actionTimeout;
+
+    const videoSetting = qtVideo ?? video;
+    const { mode: videoMode, ...videoOptions } =
+      typeof videoSetting === 'string' ? { mode: videoSetting } : (videoSetting ?? { mode: 'off' as const });
+    const recordVideo =
+      videoMode === 'on' || videoMode === 'retain-on-failure' || (videoMode === 'on-first-retry' && testInfo.retry === 1);
+
     const app = await launch(executable, args ?? [], {
       defaultTimeout: actionTimeout || undefined,
       ...launchOptions,
+      recordVideo: recordVideo ? { ...videoOptions, dir: testInfo.outputPath('videos') } : launchOptions.recordVideo,
     });
     setStepRunner((title, body) => base.step(title, body, { box: true }));
     try {
@@ -69,6 +85,11 @@ export const test = base.extend<QtFixtures & QtOptions>({
       }
       if (failed && app.output()) await testInfo.attach('app-output.txt', { body: app.output(), contentType: 'text/plain' });
       await app.close();
+      const recorded = app.video();
+      if (recorded && recordVideo) {
+        if (videoMode === 'retain-on-failure' && !failed) await recorded.delete();
+        else await testInfo.attach('video', { path: await recorded.path(), contentType: 'video/mp4' });
+      }
     }
   },
 });
