@@ -107,3 +107,22 @@ export function roleSelector(role: AriaRole | string, options: ByRoleOptions = {
 export function labelSelector(text: string | RegExp, exact?: boolean): string {
   return `label=${textValue(text, exact)}`;
 }
+
+/** Formats a value like source code, for readable locator descriptions (Playwright style). */
+export function fmt(v: unknown): string {
+  if (typeof v === 'string') return `'${v.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+  if (v instanceof RegExp) return String(v);
+  if (v && typeof v === 'object') {
+    if ('expression' in v && typeof (v as { expression: unknown }).expression === 'string')
+      return (v as { expression: string }).expression;
+    const entries = Object.entries(v).filter(([, x]) => x !== undefined);
+    return entries.length ? `{ ${entries.map(([k, x]) => `${k}: ${fmt(x)}`).join(', ')} }` : '{}';
+  }
+  return String(v);
+}
+
+/** "name(arg1, arg2)" with trailing empty option objects omitted. */
+export function call(name: string, ...args: unknown[]): string {
+  while (args.length && (args[args.length - 1] === undefined || fmt(args[args.length - 1]) === '{}')) args.pop();
+  return `${name}(${args.map(fmt).join(', ')})`;
+}

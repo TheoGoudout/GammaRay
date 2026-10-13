@@ -133,7 +133,7 @@ test.describe('errors', () => {
     expect(error.message).toContain('element is not enabled');
 
     const missing = await app.locator('#doesNotExist').click({ timeout: 200 }).catch((e) => e);
-    expect(missing.message).toContain('waiting for locator("#doesNotExist")');
+    expect(missing.message).toContain("waiting for locator('#doesNotExist')");
   });
 
   test('assertion failures show expected and received values', async ({ app }) => {

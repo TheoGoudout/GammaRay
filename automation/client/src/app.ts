@@ -10,7 +10,15 @@ import { Dialog, FileChooser, findDialogs, isFileDialog } from './dialogs';
 import { Keyboard, Mouse, Touchscreen } from './input';
 import { step } from './instrumentation';
 import { Locator, serializeArg } from './locator';
-import { labelSelector, propertySelector, roleSelector, textSelector, type AriaRole, type ByRoleOptions } from './selectors';
+import {
+  call,
+  labelSelector,
+  propertySelector,
+  roleSelector,
+  textSelector,
+  type AriaRole,
+  type ByRoleOptions,
+} from './selectors';
 import { Tracing } from './tracing';
 import type { ElementInfo, ElementRef, ScreenshotOptions, TimeoutOptions } from './types';
 import { Video, type VideoOptions } from './video';
@@ -98,32 +106,32 @@ export class QtApp {
 
   /** Elements whose text matches: case-insensitive substring, or exact with `exact: true`. */
   getByText(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
-    return this.locator(textSelector(text, options.exact));
+    return new Locator(this, textSelector(text, options.exact), undefined, call('getByText', text, options));
   }
 
   /** Elements by accessibility role and name, like Playwright's getByRole. */
   getByRole(role: AriaRole | string, options: ByRoleOptions = {}): Locator {
-    return this.locator(roleSelector(role, options));
+    return new Locator(this, roleSelector(role, options), undefined, call('getByRole', role, options));
   }
 
   /** Inputs by their label (QLabel buddy / form label, Accessible.name or the control's own text). */
   getByLabel(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
-    return this.locator(labelSelector(text, options.exact));
+    return new Locator(this, labelSelector(text, options.exact), undefined, call('getByLabel', text, options));
   }
 
   /** Inputs by placeholder text. */
   getByPlaceholder(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
-    return this.locator(propertySelector('placeholderText', text, options.exact));
+    return new Locator(this, propertySelector('placeholderText', text, options.exact), undefined, call('getByPlaceholder', text, options));
   }
 
   /** Elements by tooltip (toolTip property). */
   getByTitle(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
-    return this.locator(propertySelector('toolTip', text, options.exact));
+    return new Locator(this, propertySelector('toolTip', text, options.exact), undefined, call('getByTitle', text, options));
   }
 
   /** Elements by test id, i.e. by the testIdAttribute property (default objectName). */
   getByTestId(testId: string | RegExp): Locator {
-    return this.locator(propertySelector(this.testIdAttribute, testId, true));
+    return new Locator(this, propertySelector(this.testIdAttribute, testId, true), undefined, call('getByTestId', testId));
   }
 
   /** Changes the property getByTestId() matches (Playwright: selectors.setTestIdAttribute). */
@@ -174,7 +182,7 @@ export class QtApp {
 
   /** Element by objectName or QML id. */
   getById(id: string): Locator {
-    return this.locator(`#${JSON.stringify(id)}`);
+    return new Locator(this, `#${JSON.stringify(id)}`, undefined, call('getById', id));
   }
 
   /** Visible top-level windows. */

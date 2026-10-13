@@ -165,6 +165,10 @@ test.describe('low-level input', () => {
     await expect(todos).toHaveCount(3);
     await q.locator('#addButton').click({ delay: 150 });
     await expect(todos).toHaveCount(4);
+    // dispatchEvent emits the signal directly (no input, no actionability checks)
+    await q.locator('#newTodoField').fill('dispatched');
+    await q.locator('#addButton').dispatchEvent('clicked');
+    await expect(todos).toHaveCount(5);
   });
 });
 

@@ -6,6 +6,7 @@ import type { QtApp } from './app';
 import { ErrorCode, QtError, StrictModeViolationError } from './errors';
 import { step } from './instrumentation';
 import {
+  call,
   labelSelector,
   propertySelector,
   quote,
@@ -105,19 +106,29 @@ function describeRef(e: ElementRef): string {
  * Segments can be combined: `Button#ok[enabled=true]`.
  */
 export class Locator {
+  /** How this locator was built, as code: getByRole('button', { name: 'OK' }).first() */
+  readonly expression: string;
+
   constructor(
     readonly app: QtApp,
     readonly selector: string,
     /** Human-readable description (see describe(description)). */
     readonly description?: string,
-  ) {}
-
-  toString(): string {
-    return this.description ? `${this.description} (locator(${quote(this.selector)}))` : `locator(${quote(this.selector)})`;
+    expression?: string,
+  ) {
+    this.expression = expression ?? call('locator', selector);
   }
 
-  private derive(selector: string): Locator {
-    return new Locator(this.app, selector);
+  toString(): string {
+    return this.description ? `${this.description} (${this.expression})` : this.expression;
+  }
+
+  private derive(selector: string, method: string): Locator {
+    return new Locator(this.app, selector, undefined, `${this.expression}.${method}`);
+  }
+
+  private sub(selector: string, method: string): Locator {
+    return this.derive(`${this.selector} >> ${selector}`, method);
   }
 
   // --- composition -----------------------------------------------------------------
@@ -125,37 +136,37 @@ export class Locator {
   /** Elements matching @p selector below the elements matched by this locator. */
   locator(selector: string | Locator, options: FilterOptions = {}): Locator {
     const sub = selector instanceof Locator ? selector.selector : selector;
-    return this.derive(`${this.selector} >> ${sub}`).filter(options);
+    return this.sub(sub, call('locator', selector)).filter(options);
   }
 
   /** Elements below this one whose text matches (case-insensitive substring unless exact). */
   getByText(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
-    return this.locator(textSelector(text, options.exact));
+    return this.sub(textSelector(text, options.exact), call('getByText', text, options));
   }
 
   /** Elements by accessibility role and name, like Playwright's getByRole. */
   getByRole(role: AriaRole | string, options: ByRoleOptions = {}): Locator {
-    return this.locator(roleSelector(role, options));
+    return this.sub(roleSelector(role, options), call('getByRole', role, options));
   }
 
   /** Inputs by their label (QLabel buddy / form label, Accessible.name or the control's own text). */
   getByLabel(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
-    return this.locator(labelSelector(text, options.exact));
+    return this.sub(labelSelector(text, options.exact), call('getByLabel', text, options));
   }
 
   /** Inputs by placeholder text (placeholderText property). */
   getByPlaceholder(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
-    return this.locator(propertySelector('placeholderText', text, options.exact));
+    return this.sub(propertySelector('placeholderText', text, options.exact), call('getByPlaceholder', text, options));
   }
 
   /** Elements by tooltip (toolTip property, the closest thing to a title attribute). */
   getByTitle(text: string | RegExp, options: { exact?: boolean } = {}): Locator {
-    return this.locator(propertySelector('toolTip', text, options.exact));
+    return this.sub(propertySelector('toolTip', text, options.exact), call('getByTitle', text, options));
   }
 
   /** Elements by test id: the property set with app.setTestIdAttribute() (default objectName). */
   getByTestId(testId: string | RegExp): Locator {
-    return this.locator(propertySelector(this.app.testIdAttribute, testId, true));
+    return this.sub(propertySelector(this.app.testIdAttribute, testId, true), call('getByTestId', testId));
   }
 
   /** Narrows the matches, like Playwright's locator.filter(). */
@@ -166,35 +177,35 @@ export class Locator {
     if (options.has) s += ` >> has=${quote(options.has.selector)}`;
     if (options.hasNot) s += ` >> hasNot=${quote(options.hasNot.selector)}`;
     if (options.visible !== undefined) s += ` >> visible=${options.visible}`;
-    return s === this.selector ? this : this.derive(s);
+    return s === this.selector ? this : this.derive(s, call('filter', options));
   }
 
   /** Elements matching both this and @p other. */
   and(other: Locator): Locator {
-    return this.derive(`${this.selector} >> and=${quote(other.selector)}`);
+    return this.derive(`${this.selector} >> and=${quote(other.selector)}`, call('and', other));
   }
 
   /** Elements matching either this or @p other (in document order). */
   or(other: Locator): Locator {
-    return this.derive(`${this.selector} >> or=${quote(other.selector)}`);
+    return this.derive(`${this.selector} >> or=${quote(other.selector)}`, call('or', other));
   }
 
   first(): Locator {
-    return this.nth(0);
+    return this.derive(`${this.selector} >> nth=0`, 'first()');
   }
 
   last(): Locator {
-    return this.nth(-1);
+    return this.derive(`${this.selector} >> nth=-1`, 'last()');
   }
 
   /** The n-th match (0-based; negative counts from the end). */
   nth(index: number): Locator {
-    return this.derive(`${this.selector} >> nth=${index}`);
+    return this.derive(`${this.selector} >> nth=${index}`, call('nth', index));
   }
 
   /** Only the visible matches. */
   visible(): Locator {
-    return this.derive(`${this.selector} >> visible=true`);
+    return this.derive(`${this.selector} >> visible=true`, 'visible()');
   }
 
   // --- resolution --------------------------------------------------------------------
@@ -378,6 +389,18 @@ export class Locator {
     await this.act('scrollIntoViewIfNeeded', options, { visible: true }, (handle) =>
       this.app.connection.call('scrollIntoView', { handle }),
     );
+  }
+
+  /**
+   * Qt adaptation of dispatchEvent(): emits the signal or calls the slot @p name on the
+   * element without input or actionability checks, e.g. dispatchEvent('clicked') on a QML
+   * Button or dispatchEvent('click') on a QAbstractButton.
+   */
+  async dispatchEvent(name: string, ...args: unknown[]): Promise<void> {
+    await step(`${this}.dispatchEvent(${quote(name)})`, async () => {
+      const handle = await this.handle();
+      await this.app.connection.call('invokeMethod', { handle, method: name, args });
+    });
   }
 
   /** Removes keyboard focus from the element. */
@@ -621,7 +644,7 @@ export class Locator {
   describe(options?: TimeoutOptions): Promise<ElementInfo>;
   describe(description: string): Locator;
   describe(arg: TimeoutOptions | string = {}): Promise<ElementInfo> | Locator {
-    if (typeof arg === 'string') return new Locator(this.app, this.selector, arg);
+    if (typeof arg === 'string') return new Locator(this.app, this.selector, arg, this.expression);
     return this.handle(arg).then((handle) => this.app.connection.call<ElementInfo>('describe', { handle }));
   }
 
