@@ -38,11 +38,13 @@ namespace Automation {
 namespace Input {
 void mouseMove(QWindow *window, QPointF pos, Qt::KeyboardModifiers mods = Qt::NoModifier);
 void mousePress(QWindow *window, QPointF pos, Qt::MouseButton button, Qt::KeyboardModifiers mods = Qt::NoModifier);
-/*! @p endOfClick: advance the clock so the next press is not seen as a double click. */
+/*! @p endOfClick: advance the clock so the next press is not seen as a double click.
+ *  A null @p window only resets the button state. */
 void mouseRelease(QWindow *window, QPointF pos, Qt::MouseButton button, Qt::KeyboardModifiers mods = Qt::NoModifier,
                   bool endOfClick = true);
 void wheel(QWindow *window, QPointF pos, QPoint angleDelta, Qt::KeyboardModifiers mods = Qt::NoModifier);
 void keyPress(QWindow *window, int key, Qt::KeyboardModifiers mods, const QString &text);
+/*! No-op for a null @p window. */
 void keyRelease(QWindow *window, int key, Qt::KeyboardModifiers mods, const QString &text);
 
 struct KeySpec

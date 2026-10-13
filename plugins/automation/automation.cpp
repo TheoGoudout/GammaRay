@@ -490,9 +490,10 @@ void AutomationServer::enqueueClick(QObject *target, const QJsonObject &params, 
                 Input::mousePress(*window, *pos, opts.button, opts.modifiers);
         });
         m_input->enqueue([=]() {
-            if (reply->isDone() || !*window)
+            if (reply->isDone())
                 return;
-            // reply first: the release may open a modal dialog (nested event loop)
+            // reply first: the release may open a modal dialog (nested event loop).
+            // The window may be gone already if the press closed it; still release the button.
             if (last)
                 reply->ok();
             Input::mouseRelease(*window, *pos, opts.button, opts.modifiers, last);
@@ -529,7 +530,7 @@ void AutomationServer::enqueueTyping(QObject *target, const QString &text, bool 
                 Input::keyPress(*window, k.key, k.modifiers, k.text);
         });
         m_input->enqueue([=]() {
-            if (reply->isDone() || !*window)
+            if (reply->isDone())
                 return;
             if (lastStep)
                 reply->ok();
@@ -793,8 +794,9 @@ void AutomationServer::registerHandlers()
             Input::keyPress(*window, key.key, key.modifiers, key.text);
         });
         m_input->enqueue([=]() {
-            if (reply->isDone() || !*window)
+            if (reply->isDone())
                 return;
+            // the press may have closed the window (e.g. Escape on a dialog)
             reply->ok();
             Input::keyRelease(*window, key.key, key.modifiers, key.text);
         });
@@ -896,7 +898,7 @@ void AutomationServer::registerHandlers()
             });
         }
         m_input->enqueue([=]() {
-            if (reply->isDone() || !state->window)
+            if (reply->isDone())
                 return;
             reply->ok();
             Input::mouseRelease(state->window, state->to, opts.button, opts.modifiers);

@@ -68,6 +68,8 @@ void Input::mouseRelease(QWindow *window, QPointF pos, Qt::MouseButton button, Q
                          bool endOfClick)
 {
     s_buttons &= ~Qt::MouseButtons(button);
+    if (!window)
+        return; // target window vanished meanwhile; just forget the button state
     qt_handleMouseEvent(window, pos, window->mapToGlobal(pos), s_buttons, button, QEvent::MouseButtonRelease, mods,
                         ++s_timestamp);
     if (endOfClick)
@@ -90,6 +92,8 @@ void Input::keyPress(QWindow *window, int key, Qt::KeyboardModifiers mods, const
 
 void Input::keyRelease(QWindow *window, int key, Qt::KeyboardModifiers mods, const QString &text)
 {
+    if (!window)
+        return;
     qt_handleKeyEvent(window, QEvent::KeyRelease, key, mods, text);
 }
 
