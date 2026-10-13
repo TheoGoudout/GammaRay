@@ -24,6 +24,11 @@ test.describe('QML login form', () => {
     await expect(win).toHaveProperty('loginAttempts', 1);
   });
 
+  test('GammaRay does not alter the application (e.g. window titles)', async ({ app }) => {
+    await expect(app.locator('#qmlWindow')).toHaveProperty('title', 'QML Demo');
+    await expect(app.locator('#widgetsWindow')).toHaveProperty('windowTitle', 'Widgets Demo');
+  });
+
   test('Enter in the password field submits', async ({ app }) => {
     const win = app.locator('#qmlWindow');
     await win.locator('#usernameField').fill('admin');

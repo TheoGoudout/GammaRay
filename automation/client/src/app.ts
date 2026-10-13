@@ -29,6 +29,8 @@ export interface OwnedProcess {
 export class QtApp {
   /** Default timeout for actions, waits and assertions, in milliseconds. */
   defaultTimeout = 5_000;
+  /** Delay after every action in milliseconds (Playwright's slowMo). */
+  slowMo = 0;
   private closed = false;
   private recordedVideo: Video | null = null;
   private videos = new Set<Video>();
@@ -98,11 +100,13 @@ export class QtApp {
   /** Presses a key in the focused window, e.g. "Escape" or "Control+Q". */
   async press(key: string): Promise<void> {
     await step(`app.press(${JSON.stringify(key)})`, () => this.connection.call('press', { key }));
+    if (this.slowMo) await sleep(this.slowMo);
   }
 
   /** Types text into the focused element. */
   async type(text: string): Promise<void> {
     await step(`app.type`, () => this.connection.call('type', { text }));
+    if (this.slowMo) await sleep(this.slowMo);
   }
 
   /** Resolves once all previously requested input has been delivered to the application. */

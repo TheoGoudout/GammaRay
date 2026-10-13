@@ -15,6 +15,7 @@ import { poll } from './wait';
 /** GammaRay tool plugins disabled by default: not needed for automation, and some change app behavior. */
 export const DEFAULT_DISABLED_PLUGINS = [
   'gammaray_widgetinspector', // makes modal dialogs non-modal
+  'gammaray_guisupport', // appends " (Injected by GammaRay)" to window titles, replaces window icons
   'gammaray_quickinspector',
   'gammaray_sceneinspector',
   'gammaray_styleinspector',
@@ -67,6 +68,8 @@ export interface LaunchOptions extends CommonOptions {
   printOutput?: boolean;
   /** Default timeout of the returned app (actions, waits, assertions). */
   defaultTimeout?: number;
+  /** Slows down every action by this many milliseconds (handy for watching or recording). */
+  slowMo?: number;
   /** Record a video of the session into `dir` (see QtApp.video()), like Playwright's recordVideo. */
   recordVideo?: RecordVideoOptions;
 }
@@ -170,6 +173,7 @@ export async function launch(appPath: string, args: string[] = [], options: Laun
     const { connection, info } = await handshake(url, timeout);
     const app = new QtApp(connection, info, { launcher, output: () => output });
     if (options.defaultTimeout) app.setDefaultTimeout(options.defaultTimeout);
+    app.slowMo = options.slowMo ?? 0;
     if (options.recordVideo) {
       const { dir, format, ...videoOptions } = options.recordVideo;
       const path = join(dir, `${randomUUID()}.${format ?? 'mp4'}`);

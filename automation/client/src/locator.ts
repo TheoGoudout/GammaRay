@@ -200,7 +200,9 @@ export class Locator {
         }
 
         try {
-          return { done: true, value: await perform(handle) };
+          const value = await perform(handle);
+          if (this.app.slowMo) await sleep(this.app.slowMo);
+          return { done: true, value };
         } catch (e) {
           if (e instanceof QtError && (e.code === ErrorCode.StaleHandle || e.code === ErrorCode.NotActionable))
             return { done: false, log: `retrying: ${e.message}` };

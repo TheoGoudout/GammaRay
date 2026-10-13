@@ -110,8 +110,9 @@ option preferred. Newest entries go at the bottom.
 - **Chosen:** `launch()` disables all inspection tool plugins
   (`DEFAULT_DISABLED_PLUGINS`) through `GAMMARAY_DisabledPlugins`. The widget
   inspector makes modal dialogs non-modal, the signal and event monitors install global
-  hooks, and none of them is needed. `gammaray_qmlsupport` stays enabled for QML type
-  names.
+  hooks, and none of them is needed. `gammaray_guisupport` appends " (Injected by
+  GammaRay)" to window titles (found in the first recorded video), so it is disabled too.
+  `gammaray_qmlsupport` stays enabled for QML type names.
 
 ## D13. Qt 5.15
 
