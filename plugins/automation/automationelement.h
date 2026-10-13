@@ -69,6 +69,8 @@ struct InputTarget
     QPointF windowPos;
 };
 InputTarget inputTarget(QObject *obj, QPointF localPos, QString *error);
+/*! Where a click lands by default (local coordinates): the center of the clickable area. */
+QPointF defaultClickPosition(const QObject *obj);
 /*! Size of @p obj in its local coordinates. */
 QSizeF localSize(const QObject *obj);
 

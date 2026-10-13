@@ -199,7 +199,9 @@ bool Input::parseKey(const QString &spec, KeySpec *out, QString *error)
     const QString keyName = parts.last();
     KeySpec result;
     if (keyName.size() == 1) {
+        // a key name, not text to type: "Control+A" must not imply Shift
         result = keyForCharacter(keyName.at(0));
+        result.modifiers = Qt::NoModifier;
     } else if (const int key = namedKey(keyName)) {
         result.key = key;
         if (key == Qt::Key_Return || key == Qt::Key_Enter)

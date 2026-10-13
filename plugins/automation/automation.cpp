@@ -362,13 +362,12 @@ QVector<QObject *> AutomationServer::roots() const
 
 QPointF AutomationServer::positionParam(QObject *obj, const QJsonObject &params, const QString &key) const
 {
-    const QSizeF size = Element::localSize(obj);
     const QJsonValue p = params.value(key);
     if (p.isObject()) {
         const auto o = p.toObject();
         return QPointF(o.value(QStringLiteral("x")).toDouble(), o.value(QStringLiteral("y")).toDouble());
     }
-    return QPointF(size.width() / 2.0, size.height() / 2.0);
+    return Element::defaultClickPosition(obj);
 }
 
 void AutomationServer::objectCreated(QObject *obj)

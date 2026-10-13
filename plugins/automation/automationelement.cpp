@@ -24,7 +24,12 @@
 #include <qpa/qwindowsysteminterface.h>
 
 #ifdef QT_WIDGETS_LIB
+#include <QAbstractButton>
 #include <QApplication>
+#include <QCheckBox>
+#include <QRadioButton>
+#include <QStyle>
+#include <QStyleOptionButton>
 #include <QWidget>
 #endif
 
@@ -342,6 +347,28 @@ QSizeF Element::localSize(const QObject *obj)
     if (auto window = qobject_cast<const QWindow *>(obj))
         return QSizeF(window->size());
     return QSizeF();
+}
+
+QPointF Element::defaultClickPosition(const QObject *obj)
+{
+#ifdef QT_WIDGETS_LIB
+    // check boxes and radio buttons only react to clicks on their indicator and label,
+    // which can be far from the center when the layout stretches the widget
+    const bool isCheckBox = qobject_cast<const QCheckBox *>(obj);
+    if (isCheckBox || qobject_cast<const QRadioButton *>(obj)) {
+        auto button = static_cast<const QAbstractButton *>(obj);
+        QStyleOptionButton opt;
+        opt.initFrom(button);
+        opt.text = button->text();
+        opt.icon = button->icon();
+        opt.iconSize = button->iconSize();
+        const QRect r = button->style()->subElementRect(isCheckBox ? QStyle::SE_CheckBoxClickRect : QStyle::SE_RadioButtonClickRect, &opt, button);
+        if (r.isValid())
+            return QRectF(r).center();
+    }
+#endif
+    const QSizeF size = localSize(obj);
+    return QPointF(size.width() / 2.0, size.height() / 2.0);
 }
 
 Element::InputTarget Element::inputTarget(QObject *obj, QPointF localPos, QString *error)
