@@ -71,6 +71,12 @@ need remote access.
 Disables the GammaRay server. This implies --inprocess as there is no
 other way to connect to the GammaRay probe in this case.
 
+=item B<--probe-setting <key>=<value>>
+
+Pass an additional setting to the probe, can be used multiple times.
+For example B<--probe-setting AutomationPort=0> enables the automation
+server used by end-to-end tests.
+
 =item B<--list-probes>
 
 List all installed probes.

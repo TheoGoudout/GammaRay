@@ -69,6 +69,7 @@ function _gammaray-host-port() {
 _arguments \
   '(* -)--list-probes[list all installed probes]' \
   '--probe[specify which probe to use]:abi:_gammaray-probe' \
+  '*--probe-setting[pass an additional setting to the probe]:key=value:' \
   '(-i --injector)'{-i,--injector}'[set injection type]:injector:_gammaray-injector' \
   '--self-test[run self tests, of everything or the specified injector]::injector:_gammaray-injector' \
   '(-o --injector-override)'{-o,--injector-override}'[Override the injector executable if handled (requires -i/--injector)]:executable: _command_names -e' \

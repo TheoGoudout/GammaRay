@@ -116,6 +116,8 @@ static void usage(const char *argv0)
     out()
         << "     --no-listen                     \tdisables remote access entirely (implies --inprocess)"
         << Qt::endl;
+    out() << "     --probe-setting <key>=<value>   \tpass an additional setting to the probe (e.g. AutomationPort=0)"
+          << Qt::endl;
     out() << "     --list-probes                   \tlist all installed probes" << Qt::endl;
     out() << "     --probe <abi>                   \tspecify which probe to use" << Qt::endl;
     out() << "     --connect <host>[:port]         \tconnect to an already injected target" << Qt::endl;
@@ -227,6 +229,15 @@ int main(int argc, char **argv)
         if (arg == QLatin1String("--no-listen")) {
             options.setProbeSetting(QStringLiteral("RemoteAccessEnabled"), false);
             options.setUiMode(LaunchOptions::InProcessUi);
+        }
+        if (arg == QLatin1String("--probe-setting") && !args.isEmpty()) {
+            const QString setting = args.takeFirst();
+            const auto pos = setting.indexOf(QLatin1Char('='));
+            if (pos <= 0) {
+                out() << "Invalid probe setting '" << setting << "', expected <key>=<value>." << Qt::endl;
+                return 1;
+            }
+            options.setProbeSetting(setting.left(pos), setting.mid(pos + 1));
         }
         if (arg == QLatin1String("--list-probes")) {
             foreach (const ProbeABI &abi, ProbeFinder::listProbeABIs())
