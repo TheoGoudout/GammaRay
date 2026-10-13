@@ -91,6 +91,9 @@ private:
     QVector<QObject *> allObjects() const;
     QPointF positionParam(QObject *obj, const QJsonObject &params, const QString &key = QStringLiteral("position")) const;
 
+    QJsonObject accessibilityNode(QObject *obj, int depth);
+    void registerExtendedHandlers();
+
     // input actions
     void enqueueClick(QObject *obj, const QJsonObject &params, int clickCount, const ReplyPtr &reply);
     void enqueueTyping(QObject *obj, const QString &text, bool clearFirst, const ReplyPtr &reply);
@@ -104,6 +107,7 @@ private:
     Automation::InputQueue *m_input;
     QHash<QString, Handler> m_handlers;
     QHash<QWebSocket *, Session> m_sessions;
+    QObject *m_jsEngine = nullptr; // private QJSEngine for evaluate() on non-QML objects
     qint64 m_nextSpyId = 1;
     quint32 m_nextRecordingId = 1;
 

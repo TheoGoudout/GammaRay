@@ -47,6 +47,17 @@ void keyPress(QWindow *window, int key, Qt::KeyboardModifiers mods, const QStrin
 /*! No-op for a null @p window. */
 void keyRelease(QWindow *window, int key, Qt::KeyboardModifiers mods, const QString &text);
 
+/*! Touch tap (press + release of one finger) through a synthetic touch screen device. */
+void touchPress(QWindow *window, QPointF pos);
+void touchRelease(QWindow *window, QPointF pos);
+
+/*! Commits @p text to the focus object through an input method event (no key events). */
+bool insertText(const QString &text, QString *error);
+
+/*! Modifiers currently held down through keyDown() of a modifier key; they apply to all
+ *  subsequent mouse and key events (like Playwright's keyboard.down('Shift')). */
+Qt::KeyboardModifiers heldModifiers();
+
 /*! Where the synthesized mouse pointer currently is (for drawing it into recordings). */
 struct PointerState
 {

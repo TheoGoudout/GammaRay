@@ -13,6 +13,8 @@
 #include "automationinput.h"
 
 #include <QGuiApplication>
+#include <QInputMethodEvent>
+#include <QPointingDevice>
 #include <QKeySequence>
 #include <QPointer>
 #include <QStyleHints>
@@ -26,6 +28,8 @@
 Q_GUI_EXPORT void qt_handleMouseEvent(QWindow *window, const QPointF &local, const QPointF &global,
                                       Qt::MouseButtons state, Qt::MouseButton button,
                                       QEvent::Type type, Qt::KeyboardModifiers mods, int timestamp);
+Q_GUI_EXPORT bool qt_handleTouchEventv2(QWindow *w, const QPointingDevice *device, const QList<QEventPoint> &points,
+                                        Qt::KeyboardModifiers mods);
 Q_GUI_EXPORT void qt_handleKeyEvent(QWindow *w, QEvent::Type t, int k, Qt::KeyboardModifiers mods,
                                     const QString &text = QString(), bool autorep = false, ushort count = 1);
 
@@ -37,6 +41,35 @@ int s_timestamp = 1000;
 Qt::MouseButtons s_buttons;
 QPointer<QWindow> s_hoveredWindow;
 QPointF s_pointerPos;
+Qt::KeyboardModifiers s_heldModifiers;
+
+Qt::KeyboardModifier modifierForKey(int key)
+{
+    switch (key) {
+    case Qt::Key_Shift:
+        return Qt::ShiftModifier;
+    case Qt::Key_Control:
+        return Qt::ControlModifier;
+    case Qt::Key_Alt:
+        return Qt::AltModifier;
+    case Qt::Key_Meta:
+        return Qt::MetaModifier;
+    default:
+        return Qt::NoModifier;
+    }
+}
+
+const QPointingDevice *touchDevice()
+{
+    static QPointingDevice *device = nullptr;
+    if (!device) {
+        device = new QPointingDevice(QStringLiteral("qt-playwright touch screen"), 0x7170,
+                                     QInputDevice::DeviceType::TouchScreen, QPointingDevice::PointerType::Finger,
+                                     QInputDevice::Capability::Position | QInputDevice::Capability::Area, 10, 0);
+        QWindowSystemInterface::registerInputDevice(device);
+    }
+    return device;
+}
 
 void updateHoveredWindow(QWindow *window, QPointF pos)
 {
@@ -52,8 +85,14 @@ void updateHoveredWindow(QWindow *window, QPointF pos)
 }
 }
 
+Qt::KeyboardModifiers Input::heldModifiers()
+{
+    return s_heldModifiers;
+}
+
 void Input::mouseMove(QWindow *window, QPointF pos, Qt::KeyboardModifiers mods)
 {
+    mods |= s_heldModifiers;
     updateHoveredWindow(window, pos);
     qt_handleMouseEvent(window, pos, window->mapToGlobal(pos), s_buttons, Qt::NoButton, QEvent::MouseMove, mods,
                         ++s_timestamp);
@@ -73,6 +112,7 @@ static void activateOnClick(QWindow *window)
 
 void Input::mousePress(QWindow *window, QPointF pos, Qt::MouseButton button, Qt::KeyboardModifiers mods)
 {
+    mods |= s_heldModifiers;
     updateHoveredWindow(window, pos);
     activateOnClick(window);
     s_buttons |= button;
@@ -88,6 +128,7 @@ Input::PointerState Input::pointerState()
 void Input::mouseRelease(QWindow *window, QPointF pos, Qt::MouseButton button, Qt::KeyboardModifiers mods,
                          bool endOfClick)
 {
+    mods |= s_heldModifiers;
     s_buttons &= ~Qt::MouseButtons(button);
     if (!window)
         return; // target window vanished meanwhile; just forget the button state
@@ -108,14 +149,45 @@ void Input::wheel(QWindow *window, QPointF pos, QPoint angleDelta, Qt::KeyboardM
 
 void Input::keyPress(QWindow *window, int key, Qt::KeyboardModifiers mods, const QString &text)
 {
+    s_heldModifiers |= modifierForKey(key);
+    mods |= s_heldModifiers;
     qt_handleKeyEvent(window, QEvent::KeyPress, key, mods, text);
 }
 
 void Input::keyRelease(QWindow *window, int key, Qt::KeyboardModifiers mods, const QString &text)
 {
+    mods |= s_heldModifiers;
+    s_heldModifiers &= ~Qt::KeyboardModifiers(modifierForKey(key));
     if (!window)
         return;
     qt_handleKeyEvent(window, QEvent::KeyRelease, key, mods, text);
+}
+
+void Input::touchPress(QWindow *window, QPointF pos)
+{
+    QEventPoint point(1, QEventPoint::Pressed, pos, window->mapToGlobal(pos));
+    qt_handleTouchEventv2(window, touchDevice(), { point }, s_heldModifiers);
+}
+
+void Input::touchRelease(QWindow *window, QPointF pos)
+{
+    if (!window)
+        return;
+    QEventPoint point(1, QEventPoint::Released, pos, window->mapToGlobal(pos));
+    qt_handleTouchEventv2(window, touchDevice(), { point }, s_heldModifiers);
+}
+
+bool Input::insertText(const QString &text, QString *error)
+{
+    QObject *target = QGuiApplication::focusObject();
+    if (!target) {
+        *error = QStringLiteral("no focused element to insert text into");
+        return false;
+    }
+    QInputMethodEvent event;
+    event.setCommitString(text);
+    QCoreApplication::sendEvent(target, &event);
+    return true;
 }
 
 Input::KeySpec Input::keyForCharacter(QChar c)

@@ -19,6 +19,7 @@
 #include <QVector>
 
 #include <functional>
+#include <memory>
 
 QT_BEGIN_NAMESPACE
 class QObject;
@@ -63,6 +64,8 @@ struct AttributeFilter
     bool hasValue = true; // [checked] without a value means "truthy"
 };
 
+class Selector;
+
 struct Segment
 {
     enum Kind
@@ -70,7 +73,15 @@ struct Segment
         Compound, // Type#id[attr=value]...
         Text, // text=...
         Nth, // nth=N, first, last
-        Visible // visible=true|false
+        Visible, // visible=true|false
+        Role, // role=button[name="OK"][checked=true]   (accessibility role, like getByRole)
+        Label, // label=...   (accessible name / buddy label of an input, like getByLabel)
+        Has, // has="selector"      filters: keep matches with a descendant matching
+        HasNot, // hasNot="selector"
+        HasText, // hasText=...       keep matches whose own or descendants' text matches
+        HasNotText, // hasNotText=...
+        And, // and="selector"      keep matches also matched by selector
+        Or // or="selector"       add the elements matched by selector
     };
     Kind kind = Compound;
     QString type; // empty = any
@@ -79,6 +90,15 @@ struct Segment
     ValueMatcher text;
     int nth = 0; // negative counts from the end
     bool visible = true;
+    QString role; // Role
+    std::shared_ptr<Selector> nested; // Has, HasNot, And, Or
+
+    /*! Filters apply to the current matches instead of searching descendants. */
+    bool isFilter() const
+    {
+        return kind == Visible || kind == Has || kind == HasNot || kind == HasText || kind == HasNotText
+            || kind == And || kind == Or;
+    }
 };
 
 class Selector
@@ -115,6 +135,8 @@ public:
     static bool matches(QObject *obj, const Segment &segment);
 
 private:
+    QVector<QObject *> allCandidates(QObject *scope) const;
+    QVector<QObject *> applyFilter(const QVector<QObject *> &current, const Segment &seg) const;
     static QVector<QObject *> dropControlInternals(const QVector<QObject *> &matches);
     void collectDescendants(QObject *root, bool includeRoot, QVector<QObject *> &out,
                             QSet<QObject *> &seen) const;

@@ -160,6 +160,13 @@ public:
             ++pos; // closing quote
             out->mode = ValueMatcher::Exact;
             out->value = v;
+            // Playwright-style flags: "text"i (case-insensitive substring), "text"s (exact)
+            if (pos < s.size() && (s.at(pos) == QLatin1Char('i') || s.at(pos) == QLatin1Char('s'))
+                && (pos + 1 == s.size() || terminators.contains(s.at(pos + 1)) || s.at(pos + 1).isSpace())) {
+                if (s.at(pos) == QLatin1Char('i'))
+                    out->mode = ValueMatcher::ContainsIgnoreCase;
+                ++pos;
+            }
             return true;
         }
         if (c == QLatin1Char('/')) {
@@ -209,6 +216,50 @@ public:
         return c.isLetterOrNumber() || c == QLatin1Char('_') || c == QLatin1Char('-');
     }
 
+    // parses "[name]", "[name=value]", "[name!=value]" or "[name*=value]" starting at '['
+    static bool parseAttribute(const QString &s, int &pos, AttributeFilter *attrOut, QString *error)
+    {
+        ++pos;
+        AttributeFilter &attr = *attrOut;
+        while (pos < s.size() && s.at(pos).isSpace())
+            ++pos;
+        while (pos < s.size() && (isIdentChar(s.at(pos)) || s.at(pos) == QLatin1Char('.')))
+            attr.name.push_back(s.at(pos++));
+        if (attr.name.isEmpty()) {
+            *error = QStringLiteral("expected a property name after '['");
+            return false;
+        }
+        while (pos < s.size() && s.at(pos).isSpace())
+            ++pos;
+        if (pos < s.size() && s.at(pos) == QLatin1Char(']')) {
+            attr.hasValue = false;
+        } else {
+            if (s.mid(pos, 2) == QLatin1String("!=")) {
+                attr.op = AttributeFilter::NotEquals;
+                pos += 2;
+            } else if (s.mid(pos, 2) == QLatin1String("*=")) {
+                attr.op = AttributeFilter::Contains;
+                pos += 2;
+            } else if (pos < s.size() && s.at(pos) == QLatin1Char('=')) {
+                attr.op = AttributeFilter::Equals;
+                pos += 1;
+            } else {
+                *error = QStringLiteral("expected '=', '!=', '*=' or ']' in attribute filter");
+                return false;
+            }
+            if (!parseValue(s, pos, ValueMatcher::Exact, QStringLiteral("]"), &attr.matcher, error))
+                return false;
+            while (pos < s.size() && s.at(pos).isSpace())
+                ++pos;
+        }
+        if (pos >= s.size() || s.at(pos) != QLatin1Char(']')) {
+            *error = QStringLiteral("expected ']'");
+            return false;
+        }
+        ++pos;
+        return true;
+    }
+
     static bool parseCompound(const QString &s, Segment *seg, QString *error)
     {
         seg->kind = Segment::Compound;
@@ -244,44 +295,9 @@ public:
                 }
                 seg->id = id;
             } else if (c == QLatin1Char('[')) {
-                ++pos;
                 AttributeFilter attr;
-                while (pos < s.size() && s.at(pos).isSpace())
-                    ++pos;
-                while (pos < s.size() && (isIdentChar(s.at(pos)) || s.at(pos) == QLatin1Char('.')))
-                    attr.name.push_back(s.at(pos++));
-                if (attr.name.isEmpty()) {
-                    *error = QStringLiteral("expected a property name after '['");
+                if (!parseAttribute(s, pos, &attr, error))
                     return false;
-                }
-                while (pos < s.size() && s.at(pos).isSpace())
-                    ++pos;
-                if (pos < s.size() && s.at(pos) == QLatin1Char(']')) {
-                    attr.hasValue = false;
-                } else {
-                    if (s.mid(pos, 2) == QLatin1String("!=")) {
-                        attr.op = AttributeFilter::NotEquals;
-                        pos += 2;
-                    } else if (s.mid(pos, 2) == QLatin1String("*=")) {
-                        attr.op = AttributeFilter::Contains;
-                        pos += 2;
-                    } else if (pos < s.size() && s.at(pos) == QLatin1Char('=')) {
-                        attr.op = AttributeFilter::Equals;
-                        pos += 1;
-                    } else {
-                        *error = QStringLiteral("expected '=', '!=', '*=' or ']' in attribute filter");
-                        return false;
-                    }
-                    if (!parseValue(s, pos, ValueMatcher::Exact, QStringLiteral("]"), &attr.matcher, error))
-                        return false;
-                    while (pos < s.size() && s.at(pos).isSpace())
-                        ++pos;
-                }
-                if (pos >= s.size() || s.at(pos) != QLatin1Char(']')) {
-                    *error = QStringLiteral("expected ']'");
-                    return false;
-                }
-                ++pos;
                 seg->attributes.push_back(attr);
             } else {
                 *error = QStringLiteral("unexpected character '%1' in \"%2\"").arg(c).arg(s);
@@ -320,6 +336,73 @@ public:
             }
             seg->visible = v == QLatin1String("true");
             return true;
+        }
+        if (s.startsWith(QLatin1String("role="))) {
+            seg->kind = Segment::Role;
+            int pos = 5;
+            while (pos < s.size() && isIdentChar(s.at(pos)))
+                seg->role.push_back(s.at(pos++).toLower());
+            if (seg->role.isEmpty()) {
+                *error = QStringLiteral("role= expects a role name");
+                return false;
+            }
+            while (pos < s.size()) {
+                if (s.at(pos) != QLatin1Char('[')) {
+                    *error = QStringLiteral("unexpected character '%1' after role").arg(s.at(pos));
+                    return false;
+                }
+                AttributeFilter attr;
+                if (!parseAttribute(s, pos, &attr, error))
+                    return false;
+                seg->attributes.push_back(attr);
+            }
+            return true;
+        }
+        struct TextLike
+        {
+            const char *prefix;
+            Segment::Kind kind;
+        };
+        static const TextLike textLike[] = {
+            { "label=", Segment::Label },
+            { "hasText=", Segment::HasText },
+            { "hasNotText=", Segment::HasNotText },
+        };
+        for (const auto &t : textLike) {
+            const QLatin1String prefix(t.prefix);
+            if (!s.startsWith(prefix))
+                continue;
+            seg->kind = t.kind;
+            int pos = prefix.size();
+            if (!parseValue(s, pos, ValueMatcher::ContainsIgnoreCase, QString(), &seg->text, error))
+                return false;
+            if (!s.mid(pos).trimmed().isEmpty()) {
+                *error = QStringLiteral("unexpected trailing characters after %1 value").arg(prefix);
+                return false;
+            }
+            return true;
+        }
+        static const TextLike nestedKinds[] = {
+            { "has=", Segment::Has },
+            { "hasNot=", Segment::HasNot },
+            { "and=", Segment::And },
+            { "or=", Segment::Or },
+        };
+        for (const auto &t : nestedKinds) {
+            const QLatin1String prefix(t.prefix);
+            if (!s.startsWith(prefix))
+                continue;
+            seg->kind = t.kind;
+            int pos = prefix.size();
+            ValueMatcher quoted;
+            if (pos >= s.size() || (s.at(pos) != QLatin1Char('"') && s.at(pos) != QLatin1Char('\''))) {
+                *error = QStringLiteral("%1 expects a quoted selector").arg(prefix);
+                return false;
+            }
+            if (!parseValue(s, pos, ValueMatcher::Exact, QString(), &quoted, error))
+                return false;
+            seg->nested = std::make_shared<Selector>(Selector::parse(quoted.value, error));
+            return seg->nested->isValid();
         }
         if (s.startsWith(QLatin1String("text="))) {
             seg->kind = Segment::Text;
@@ -461,6 +544,62 @@ static bool attributeMatches(QObject *obj, const AttributeFilter &attr)
     return matched;
 }
 
+static bool stateMatches(const AttributeFilter &attr, bool actual)
+{
+    if (!attr.hasValue)
+        return actual;
+    const bool wanted = attr.matcher.value.compare(QLatin1String("false"), Qt::CaseInsensitive) != 0;
+    return attr.op == AttributeFilter::NotEquals ? actual != wanted : actual == wanted;
+}
+
+// role=button[name="Save"i][checked=true][disabled=false][include-hidden]
+static bool roleMatches(QObject *obj, const Segment &seg)
+{
+    const auto acc = Element::accessible(obj);
+    if (!acc.valid || (acc.role != seg.role && acc.qtRole != seg.role))
+        return false;
+    bool includeHidden = false;
+    for (const auto &attr : seg.attributes) {
+        const QString &n = attr.name;
+        if (n == QLatin1String("include-hidden") || n == QLatin1String("includeHidden")) {
+            includeHidden = stateMatches(attr, true);
+        } else if (n == QLatin1String("name") || n == QLatin1String("description")) {
+            const QString actual = n == QLatin1String("name") ? acc.name : acc.description;
+            bool ok = attr.matcher.matches(actual) || attr.matcher.matches(stripMnemonic(actual));
+            if (attr.op == AttributeFilter::Contains)
+                ok = actual.contains(attr.matcher.value, Qt::CaseInsensitive);
+            if (attr.op == AttributeFilter::NotEquals)
+                ok = !ok;
+            if (!ok)
+                return false;
+        } else if (n == QLatin1String("checked")) {
+            if (!stateMatches(attr, acc.checked))
+                return false;
+        } else if (n == QLatin1String("disabled")) {
+            if (!stateMatches(attr, acc.disabled))
+                return false;
+        } else if (n == QLatin1String("expanded")) {
+            if (!stateMatches(attr, acc.expanded))
+                return false;
+        } else if (n == QLatin1String("selected")) {
+            if (!stateMatches(attr, acc.selected))
+                return false;
+        } else if (n == QLatin1String("pressed")) {
+            if (!stateMatches(attr, acc.pressed))
+                return false;
+        } else if (n == QLatin1String("level")) {
+            if (acc.level != attr.matcher.value.toInt())
+                return false;
+        } else {
+            // any other Qt property, as in compound selectors
+            if (!attributeMatches(obj, attr))
+                return false;
+        }
+    }
+    // like Playwright, hidden elements are excluded unless asked for
+    return includeHidden || Element::isVisible(obj);
+}
+
 bool SelectorEngine::matches(QObject *obj, const Segment &segment)
 {
     switch (segment.kind) {
@@ -474,6 +613,22 @@ bool SelectorEngine::matches(QObject *obj, const Segment &segment)
         const QString t = Element::text(obj);
         return segment.text.matches(t) || segment.text.matches(stripMnemonic(t));
     }
+    case Segment::Role:
+        return roleMatches(obj, segment);
+    case Segment::Label: {
+        const auto acc = Element::accessible(obj);
+        if (!acc.valid || acc.role == QLatin1String("text") || acc.role == QLatin1String("generic")
+            || acc.role == QLatin1String("window") || acc.name.isEmpty())
+            return false;
+        return segment.text.matches(acc.name) || segment.text.matches(stripMnemonic(acc.name));
+    }
+    case Segment::Has:
+    case Segment::HasNot:
+    case Segment::HasText:
+    case Segment::HasNotText:
+    case Segment::And:
+    case Segment::Or:
+        return true; // filters, see applyFilter()
     case Segment::Compound:
         break;
     }
@@ -533,30 +688,100 @@ void SelectorEngine::collectDescendants(QObject *root, bool includeRoot, QVector
     }
 }
 
+QVector<QObject *> SelectorEngine::allCandidates(QObject *scope) const
+{
+    QVector<QObject *> all;
+    QSet<QObject *> seen;
+    if (scope) {
+        collectDescendants(scope, false, all, seen);
+    } else {
+        const auto roots = m_roots();
+        for (QObject *root : roots) {
+            if (!m_accept || m_accept(root))
+                collectDescendants(root, true, all, seen);
+        }
+    }
+    return all;
+}
+
+QVector<QObject *> SelectorEngine::applyFilter(const QVector<QObject *> &current, const Segment &seg) const
+{
+    QVector<QObject *> result;
+    switch (seg.kind) {
+    case Segment::Visible:
+        for (QObject *obj : current) {
+            if (matches(obj, seg))
+                result.push_back(obj);
+        }
+        break;
+    case Segment::Has:
+    case Segment::HasNot:
+        for (QObject *obj : current) {
+            const bool has = !query(*seg.nested, obj).isEmpty();
+            if (has == (seg.kind == Segment::Has))
+                result.push_back(obj);
+        }
+        break;
+    case Segment::HasText:
+    case Segment::HasNotText:
+        for (QObject *obj : current) {
+            QVector<QObject *> subtree;
+            QSet<QObject *> seen;
+            collectDescendants(obj, true, subtree, seen);
+            bool found = false;
+            for (QObject *o : std::as_const(subtree)) {
+                if (Element::hasText(o)) {
+                    const QString t = Element::text(o);
+                    if (seg.text.matches(t) || seg.text.matches(stripMnemonic(t))) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (found == (seg.kind == Segment::HasText))
+                result.push_back(obj);
+        }
+        break;
+    case Segment::And: {
+        const auto other = query(*seg.nested);
+        const QSet<QObject *> otherSet(other.cbegin(), other.cend());
+        for (QObject *obj : current) {
+            if (otherSet.contains(obj))
+                result.push_back(obj);
+        }
+        break;
+    }
+    case Segment::Or: {
+        const auto other = query(*seg.nested);
+        QSet<QObject *> wanted(current.cbegin(), current.cend());
+        for (QObject *o : other)
+            wanted.insert(o);
+        // union in document order
+        const auto all = allCandidates(nullptr);
+        for (QObject *obj : all) {
+            if (wanted.remove(obj))
+                result.push_back(obj);
+        }
+        for (QObject *obj : std::as_const(wanted)) // outside the tree (unusual): keep, unordered
+            result.push_back(obj);
+        break;
+    }
+    default:
+        result = current;
+        break;
+    }
+    return result;
+}
+
 QVector<QObject *> SelectorEngine::query(const Selector &selector, QObject *scope) const
 {
     QVector<QObject *> current;
     bool started = false;
 
-    auto allCandidates = [&]() {
-        QVector<QObject *> all;
-        QSet<QObject *> seen;
-        if (scope) {
-            collectDescendants(scope, false, all, seen);
-        } else {
-            const auto roots = m_roots();
-            for (QObject *root : roots) {
-                if (!m_accept || m_accept(root))
-                    collectDescendants(root, true, all, seen);
-            }
-        }
-        return all;
-    };
-
     for (const Segment &seg : selector.segments) {
         if (seg.kind == Segment::Nth) {
             if (!started) {
-                current = allCandidates();
+                current = allCandidates(scope);
                 started = true;
             }
             const int idx = seg.nth < 0 ? current.size() + seg.nth : seg.nth;
@@ -566,19 +791,18 @@ QVector<QObject *> SelectorEngine::query(const Selector &selector, QObject *scop
                 current.clear();
             continue;
         }
-        if (seg.kind == Segment::Visible && started) {
-            QVector<QObject *> filtered;
-            for (QObject *obj : std::as_const(current)) {
-                if (matches(obj, seg))
-                    filtered.push_back(obj);
+        if (seg.isFilter()) {
+            if (!started) {
+                current = allCandidates(scope);
+                started = true;
             }
-            current = filtered;
+            current = applyFilter(current, seg);
             continue;
         }
 
         QVector<QObject *> candidates;
         if (!started) {
-            candidates = allCandidates();
+            candidates = allCandidates(scope);
         } else {
             QSet<QObject *> seen;
             for (QObject *obj : std::as_const(current)) {

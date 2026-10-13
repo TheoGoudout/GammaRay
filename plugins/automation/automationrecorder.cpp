@@ -35,36 +35,11 @@ using namespace GammaRay::Automation;
 static const qreal TitleBarHeight = 22;
 
 namespace {
-// Stacking order heuristic (the offscreen platform has no real window stacking):
-// normal windows, then the active one, then dialogs, then popups/tool tips.
-int stackingRank(QObject *window)
-{
-    Qt::WindowType type = Qt::Window;
-    QWindow *handle = nullptr;
-#ifdef QT_WIDGETS_LIB
-    if (auto w = qobject_cast<QWidget *>(window)) {
-        type = w->windowType();
-        handle = w->windowHandle();
-    }
-#endif
-    if (auto w = qobject_cast<QWindow *>(window)) {
-        type = w->type();
-        handle = w;
-    }
-    if (type == Qt::Popup || type == Qt::ToolTip)
-        return 3;
-    if (type == Qt::Dialog || type == Qt::Sheet || (handle && handle->transientParent()))
-        return 2;
-    if (handle && handle == QGuiApplication::focusWindow())
-        return 1;
-    return 0;
-}
-
 QVector<QObject *> windowsInStackingOrder()
 {
     auto windows = Element::topLevelWindows(true);
     std::stable_sort(windows.begin(), windows.end(),
-                     [](QObject *a, QObject *b) { return stackingRank(a) < stackingRank(b); });
+                     [](QObject *a, QObject *b) { return Element::stackingRank(a) < Element::stackingRank(b); });
     return windows;
 }
 
@@ -175,7 +150,7 @@ QImage Recorder::compose()
         const QRectF geometry = Element::globalGeometry(w);
         if (m_options.chrome) {
             const QRectF bar(geometry.left(), geometry.top() - TitleBarHeight, geometry.width(), TitleBarHeight);
-            const bool active = stackingRank(w) > 0;
+            const bool active = Element::stackingRank(w) > 0;
             p.fillRect(bar, active ? QColor(0x3d, 0x5a, 0x80) : QColor(0x4a, 0x4a, 0x4a));
             p.setPen(Qt::white);
             p.setFont(titleFont);

@@ -14,7 +14,9 @@
 
 #include <core/objectdataprovider.h>
 
+#include <QAccessible>
 #include <QGuiApplication>
+#include <QMetaEnum>
 #include <QMetaProperty>
 #include <QRegularExpression>
 #include <QSet>
@@ -636,4 +638,292 @@ QVector<QObject *> Element::topLevelWindows(bool includePopups)
         result.push_back(w);
     }
     return result;
+}
+
+static QString ariaRole(QAccessible::Role role)
+{
+    switch (role) {
+    case QAccessible::Button:
+    case QAccessible::ButtonMenu:
+    case QAccessible::ButtonDropDown:
+        return QStringLiteral("button");
+    case QAccessible::CheckBox:
+        return QStringLiteral("checkbox");
+    case QAccessible::RadioButton:
+        return QStringLiteral("radio");
+    case QAccessible::EditableText:
+        return QStringLiteral("textbox");
+    case QAccessible::ComboBox:
+        return QStringLiteral("combobox");
+    case QAccessible::List:
+        return QStringLiteral("list");
+    case QAccessible::ListItem:
+        return QStringLiteral("listitem");
+    case QAccessible::Slider:
+        return QStringLiteral("slider");
+    case QAccessible::SpinBox:
+        return QStringLiteral("spinbutton");
+    case QAccessible::ProgressBar:
+        return QStringLiteral("progressbar");
+    case QAccessible::Dialog:
+        return QStringLiteral("dialog");
+    case QAccessible::AlertMessage:
+        return QStringLiteral("alert");
+    case QAccessible::MenuBar:
+        return QStringLiteral("menubar");
+    case QAccessible::PopupMenu:
+        return QStringLiteral("menu");
+    case QAccessible::MenuItem:
+        return QStringLiteral("menuitem");
+    case QAccessible::PageTab:
+        return QStringLiteral("tab");
+    case QAccessible::PageTabList:
+        return QStringLiteral("tablist");
+    case QAccessible::ToolBar:
+        return QStringLiteral("toolbar");
+    case QAccessible::ToolTip:
+        return QStringLiteral("tooltip");
+    case QAccessible::StatusBar:
+        return QStringLiteral("status");
+    case QAccessible::Grouping:
+        return QStringLiteral("group");
+    case QAccessible::Separator:
+    case QAccessible::Splitter:
+        return QStringLiteral("separator");
+    case QAccessible::ScrollBar:
+        return QStringLiteral("scrollbar");
+    case QAccessible::Table:
+        return QStringLiteral("table");
+    case QAccessible::Row:
+        return QStringLiteral("row");
+    case QAccessible::Cell:
+        return QStringLiteral("cell");
+    case QAccessible::ColumnHeader:
+        return QStringLiteral("columnheader");
+    case QAccessible::RowHeader:
+        return QStringLiteral("rowheader");
+    case QAccessible::Tree:
+        return QStringLiteral("tree");
+    case QAccessible::TreeItem:
+        return QStringLiteral("treeitem");
+    case QAccessible::Link:
+        return QStringLiteral("link");
+    case QAccessible::Graphic:
+        return QStringLiteral("img");
+    case QAccessible::Heading:
+        return QStringLiteral("heading");
+    case QAccessible::Paragraph:
+        return QStringLiteral("paragraph");
+    case QAccessible::StaticText:
+        return QStringLiteral("text"); // no ARIA equivalent; Playwright shows static text as text nodes
+    case QAccessible::Window:
+        return QStringLiteral("window");
+    case QAccessible::Client:
+    case QAccessible::Pane:
+    case QAccessible::Section:
+    case QAccessible::LayeredPane:
+    case QAccessible::Whitespace:
+        return QStringLiteral("generic");
+    default:
+        break;
+    }
+    const QMetaEnum me = QMetaEnum::fromType<QAccessible::Role>();
+    const char *key = me.valueToKey(role);
+    return key ? QString::fromLatin1(key).toLower() : QStringLiteral("unknown");
+}
+
+void Element::ensureAccessibilityActive()
+{
+    // Qt Quick controls only create accessibility interfaces once accessibility is active
+    // (normally when a screen reader connects). Activate it on first use.
+    static bool activated = false;
+    if (activated)
+        return;
+    activated = true;
+    QAccessible::setActive(true);
+}
+
+Element::AccessibleInfo Element::accessible(QObject *obj)
+{
+    ensureAccessibilityActive();
+    AccessibleInfo info;
+    QAccessibleInterface *iface = QAccessible::queryAccessibleInterface(obj);
+    if (!iface || !iface->isValid())
+        return info;
+    info.valid = true;
+    info.role = ariaRole(iface->role());
+    const QMetaEnum me = QMetaEnum::fromType<QAccessible::Role>();
+    if (const char *key = me.valueToKey(iface->role()))
+        info.qtRole = QString::fromLatin1(key).toLower();
+    info.name = iface->text(QAccessible::Name);
+    info.description = iface->text(QAccessible::Description);
+    if (info.name.isEmpty() || info.description.isEmpty()) {
+        // Qt Quick only pushes names into its accessibility interfaces while a platform
+        // accessibility bridge is active, which offscreen/CI setups lack. Fall back to an
+        // explicit Accessible.name/description (the attached object is a child of the item)
+        for (QObject *child : obj->children()) {
+            if (!child->inherits("QQuickAccessibleAttached"))
+                continue;
+            if (info.name.isEmpty())
+                info.name = child->property("name").toString();
+            if (info.description.isEmpty())
+                info.description = child->property("description").toString();
+        }
+    }
+    if (info.name.isEmpty()) {
+        // ... then, like browsers do for unlabeled controls, to the visible text or placeholder
+        if (editableState(obj) >= 0)
+            info.name = obj->property("placeholderText").toString();
+        else if (hasText(obj))
+            info.name = text(obj);
+        info.name.remove(QRegularExpression(QStringLiteral("&(?!&)")));
+    }
+    info.value = iface->text(QAccessible::Value);
+    if (auto valueIface = iface->valueInterface())
+        info.value = valueIface->currentValue().toString();
+    const QAccessible::State st = iface->state();
+    info.checked = st.checked;
+    info.checkable = st.checkable;
+    info.disabled = st.disabled || !isEnabled(obj);
+    // Qt Quick states are not updated without a platform bridge either: prefer properties
+    const QVariant checked = obj->property("checked");
+    if (checked.isValid())
+        info.checked = checked.toBool();
+    const QVariant pressed = obj->property("pressed");
+    info.expanded = st.expanded;
+    info.expandable = st.expandable;
+    info.selected = st.selected;
+    info.pressed = pressed.isValid() ? pressed.toBool() : bool(st.pressed);
+    info.focused = st.focused;
+    info.readOnly = st.readOnly;
+    info.invisible = st.invisible;
+    const QVariant level = obj->property("level");
+    if (iface->role() == QAccessible::Heading && level.isValid())
+        info.level = level.toInt();
+    return info;
+}
+
+QVector<QObject *> Element::accessibleChildren(QObject *obj)
+{
+    ensureAccessibilityActive();
+    QVector<QObject *> result;
+    QAccessibleInterface *iface = QAccessible::queryAccessibleInterface(obj);
+    if (!iface || !iface->isValid())
+        return result;
+    for (int i = 0; i < iface->childCount(); ++i) {
+        QAccessibleInterface *child = iface->child(i);
+        if (child && child->isValid() && child->object())
+            result.push_back(child->object());
+    }
+    return result;
+}
+
+int Element::editableState(const QObject *obj)
+{
+    const QMetaObject *mo = obj->metaObject();
+    const int readOnlyIdx = mo->indexOfProperty("readOnly");
+    const int editableIdx = mo->indexOfProperty("editable"); // QComboBox, QML ComboBox/SpinBox
+    if (readOnlyIdx < 0 && editableIdx < 0)
+        return -1;
+    if (!isEnabled(obj))
+        return 0;
+    if (editableIdx >= 0 && !mo->property(editableIdx).read(obj).toBool())
+        return 0;
+    if (readOnlyIdx >= 0 && mo->property(readOnlyIdx).read(obj).toBool())
+        return 0;
+    return 1;
+}
+
+qreal Element::viewportRatio(QObject *obj)
+{
+    const QRectF rect = globalGeometry(obj);
+    if (rect.isEmpty() || !isVisible(obj))
+        return 0;
+    QRectF visible = rect;
+#ifdef QT_WIDGETS_LIB
+    if (auto w = qobject_cast<QWidget *>(obj)) {
+        for (QWidget *p = w->parentWidget(); p; p = p->parentWidget())
+            visible &= globalGeometry(p);
+    }
+#endif
+#ifdef QT_QUICK_LIB
+    if (auto item = qobject_cast<QQuickItem *>(obj)) {
+        for (QQuickItem *p = item->parentItem(); p; p = p->parentItem()) {
+            if (p->clip())
+                visible &= globalGeometry(p);
+        }
+        if (QWindow *rw = renderWindow(item->window()))
+            visible &= QRectF(rw->geometry());
+    }
+#endif
+    if (visible.isEmpty())
+        return 0;
+    return (visible.width() * visible.height()) / (rect.width() * rect.height());
+}
+
+int Element::stackingRank(QObject *window)
+{
+    // the offscreen platform has no real stacking order: normal windows, then the
+    // active one, then dialogs, then popups/tool tips
+    Qt::WindowType type = Qt::Window;
+    QWindow *handle = nullptr;
+#ifdef QT_WIDGETS_LIB
+    if (auto w = qobject_cast<QWidget *>(window)) {
+        type = w->windowType();
+        handle = w->windowHandle();
+    }
+#endif
+    if (auto w = qobject_cast<QWindow *>(window)) {
+        type = w->type();
+        handle = w;
+    }
+    if (type == Qt::Popup || type == Qt::ToolTip)
+        return 3;
+    if (type == Qt::Dialog || type == Qt::Sheet || (handle && handle->transientParent()))
+        return 2;
+    if (handle && handle == QGuiApplication::focusWindow())
+        return 1;
+    return 0;
+}
+
+QWindow *Element::windowAt(QPointF global, QPointF *localPos)
+{
+    QObject *best = nullptr;
+    int bestRank = -1;
+    const auto windows = topLevelWindows(true);
+    for (QObject *w : windows) {
+        if (!globalGeometry(w).contains(global))
+            continue;
+        const int rank = stackingRank(w);
+        if (rank >= bestRank) {
+            best = w;
+            bestRank = rank;
+        }
+    }
+    if (!best)
+        return nullptr;
+    QString error;
+    QWindow *window = inputTarget(best, QPointF(), &error).window;
+    if (window)
+        *localPos = window->mapFromGlobal(global);
+    return window;
+}
+
+void Element::blur(QObject *obj)
+{
+#ifdef QT_WIDGETS_LIB
+    if (auto w = qobject_cast<QWidget *>(obj)) {
+        w->clearFocus();
+        return;
+    }
+#endif
+#ifdef QT_QUICK_LIB
+    if (auto item = qobject_cast<QQuickItem *>(obj)) {
+        item->setFocus(false);
+        if (item->hasActiveFocus() && item->window())
+            item->window()->contentItem()->forceActiveFocus();
+        return;
+    }
+#endif
+    Q_UNUSED(obj);
 }

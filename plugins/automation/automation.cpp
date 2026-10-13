@@ -30,10 +30,23 @@
 #include <QJsonDocument>
 #include <QMetaMethod>
 #include <QMutexLocker>
+#include <QPainter>
 #include <QSaveFile>
+#include <QStyleHints>
 #include <QWebSocket>
 #include <QWebSocketServer>
 #include <QWindow>
+
+#ifdef QT_QML_LIB
+#include <QJSEngine>
+#include <QJSValueIterator>
+#include <QQmlEngine>
+#endif
+
+#ifdef QT_WIDGETS_LIB
+#include <QAbstractItemView>
+#include <QComboBox>
+#endif
 
 #include <iostream>
 
@@ -190,6 +203,7 @@ AutomationServer::AutomationServer(Probe *probe, QObject *parent)
     connect(probe, &Probe::objectDestroyed, this, &AutomationServer::objectDestroyed);
 
     registerHandlers();
+    registerExtendedHandlers();
     listen();
 }
 
@@ -320,6 +334,14 @@ QJsonObject AutomationServer::describe(QObject *obj)
     o.insert(QStringLiteral("enabled"), Element::isEnabled(obj));
     if (Element::hasGeometry(obj))
         o.insert(QStringLiteral("geometry"), rectToJson(Element::globalGeometry(obj)));
+    const auto acc = Element::accessible(obj);
+    o.insert(QStringLiteral("editable"), Element::editableState(obj));
+    if (acc.valid) {
+        o.insert(QStringLiteral("role"), acc.role);
+        o.insert(QStringLiteral("accessibleName"), acc.name);
+        if (!acc.description.isEmpty())
+            o.insert(QStringLiteral("accessibleDescription"), acc.description);
+    }
     return o;
 }
 
@@ -616,7 +638,10 @@ void AutomationServer::registerHandlers()
         QJsonObject r { { QStringLiteral("attached"), true },
                         { QStringLiteral("visible"), Element::isVisible(obj) },
                         { QStringLiteral("enabled"), Element::isEnabled(obj) },
+                        { QStringLiteral("editable"), Element::editableState(obj) },
                         { QStringLiteral("hasGeometry"), Element::hasGeometry(obj) } };
+        if (Element::hasGeometry(obj))
+            r.insert(QStringLiteral("viewportRatio"), Element::viewportRatio(obj));
         if (Element::hasGeometry(obj)) {
             r.insert(QStringLiteral("geometry"), rectToJson(Element::globalGeometry(obj)));
             if (params.value(QStringLiteral("checkHitTarget")).toBool(true) && Element::isVisible(obj)) {
@@ -938,10 +963,35 @@ void AutomationServer::registerHandlers()
             }
         }
         QString error;
-        const QImage img = Element::grab(obj, params.value(QStringLiteral("window")).toBool(), &error);
+        // a blinking text cursor makes screenshots flaky: keep it steady (Playwright hides it)
+        if (params.value(QStringLiteral("caret")).toString() == QLatin1String("hide"))
+            QGuiApplication::styleHints()->setCursorFlashTime(0);
+        const bool wholeWindow = params.value(QStringLiteral("window")).toBool();
+        QImage img = Element::grab(obj, wholeWindow, &error);
         if (img.isNull()) {
             reply->fail(Failed, error.isEmpty() ? QStringLiteral("failed to grab image") : error);
             return;
+        }
+        const QJsonArray mask = params.value(QStringLiteral("mask")).toArray();
+        if (!mask.isEmpty()) {
+            // paint over the given elements, like Playwright's screenshot({ mask })
+            QRectF target = Element::globalGeometry(obj);
+            if (wholeWindow || !Element::hasGeometry(obj)) {
+                QString ignored;
+                if (QWindow *w = Element::inputTarget(obj, QPointF(), &ignored).window)
+                    target = QRectF(w->geometry());
+            }
+            const qreal scale = target.width() > 0 ? img.width() / target.width() : 1.0;
+            QColor color(params.value(QStringLiteral("maskColor")).toString(QStringLiteral("#ff00ff")));
+            img = img.convertToFormat(QImage::Format_ARGB32);
+            QPainter p(&img);
+            for (const auto &h : mask) {
+                QObject *m = m_handles.object(static_cast<qint64>(h.toDouble()));
+                if (!m || !Element::isVisible(m))
+                    continue;
+                const QRectF r = Element::globalGeometry(m).translated(-target.topLeft());
+                p.fillRect(QRectF(r.topLeft() * scale, r.size() * scale), color);
+            }
         }
         QByteArray png;
         QBuffer buffer(&png);
@@ -1107,5 +1157,431 @@ void AutomationServer::registerHandlers()
             }
         }
         reply->ok();
+    };
+}
+
+// --- accessibility snapshot ----------------------------------------------------------
+
+QJsonObject AutomationServer::accessibilityNode(QObject *obj, int depth)
+{
+    const auto acc = Element::accessible(obj);
+    QJsonObject node { { QStringLiteral("role"), acc.role }, { QStringLiteral("name"), acc.name } };
+    QString value = acc.value;
+    if (acc.role == QLatin1String("textbox") && value.isEmpty())
+        value = Element::text(obj);
+    if (!value.isEmpty() && acc.role != QLatin1String("text") && value != acc.name)
+        node.insert(QStringLiteral("value"), value);
+    if (acc.checkable || acc.role == QLatin1String("checkbox") || acc.role == QLatin1String("radio"))
+        node.insert(QStringLiteral("checked"), acc.checked);
+    if (acc.disabled)
+        node.insert(QStringLiteral("disabled"), true);
+    if (acc.expandable)
+        node.insert(QStringLiteral("expanded"), acc.expanded);
+    if (acc.selected)
+        node.insert(QStringLiteral("selected"), true);
+    if (acc.pressed && acc.role == QLatin1String("button"))
+        node.insert(QStringLiteral("pressed"), true);
+    if (acc.level)
+        node.insert(QStringLiteral("level"), acc.level);
+
+    QJsonArray children;
+    if (depth < 64) {
+        const auto kids = Element::accessibleChildren(obj);
+        for (QObject *child : kids) {
+            const auto childAcc = Element::accessible(child);
+            if (childAcc.invisible || (Element::hasGeometry(child) && !Element::isVisible(child)))
+                continue;
+            const QJsonObject childNode = accessibilityNode(child, depth + 1);
+            // unnamed generic containers add no information: inline their children
+            if (childNode.value(QStringLiteral("role")).toString() == QLatin1String("generic")
+                && childNode.value(QStringLiteral("name")).toString().isEmpty()) {
+                const auto grandChildren = childNode.value(QStringLiteral("children")).toArray();
+                for (const auto &g : grandChildren)
+                    children.push_back(g);
+            } else {
+                children.push_back(childNode);
+            }
+        }
+    }
+    if (!children.isEmpty())
+        node.insert(QStringLiteral("children"), children);
+    return node;
+}
+
+#ifdef QT_QML_LIB
+static QJsonValue jsToJson(const QJSValue &v, const ObjectMapper &mapper, int depth = 0)
+{
+    if (v.isUndefined() || v.isNull() || depth > 32)
+        return QJsonValue::Null;
+    if (v.isBool())
+        return v.toBool();
+    if (v.isNumber())
+        return v.toNumber();
+    if (v.isString())
+        return v.toString();
+    if (v.isQObject())
+        return mapper.toJson(v.toQObject());
+    if (v.isDate())
+        return v.toDateTime().toString(Qt::ISODateWithMs);
+    if (v.isArray()) {
+        QJsonArray arr;
+        const int n = v.property(QStringLiteral("length")).toInt();
+        for (int i = 0; i < n; ++i)
+            arr.push_back(jsToJson(v.property(quint32(i)), mapper, depth + 1));
+        return arr;
+    }
+    if (v.isCallable())
+        return QJsonValue::Null;
+    if (v.isObject()) {
+        QJsonObject obj;
+        QJSValueIterator it(v);
+        while (it.hasNext()) {
+            it.next();
+            obj.insert(it.name(), jsToJson(it.value(), mapper, depth + 1));
+        }
+        return obj;
+    }
+    return variantToJson(v.toVariant(), mapper);
+}
+#endif
+
+void AutomationServer::registerExtendedHandlers()
+{
+    auto &h = m_handlers;
+
+    // locator.evaluate(fn, arg) / evaluateAll / app.evaluate: JavaScript run by Qt's JS engine,
+    // with the element(s) exposed as QObject wrappers (properties, slots, invokables, signals)
+    h[QStringLiteral("evaluate")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+#ifdef QT_QML_LIB
+        QList<QObject *> elements;
+        const bool many = params.contains(QStringLiteral("handles"));
+        if (many) {
+            const auto handles = params.value(QStringLiteral("handles")).toArray();
+            for (const auto &hv : handles) {
+                QObject *o = m_handles.object(static_cast<qint64>(hv.toDouble()));
+                if (!o) {
+                    reply->fail(StaleHandle, QStringLiteral("element %1 no longer exists").arg(hv.toDouble()));
+                    return;
+                }
+                elements.push_back(o);
+            }
+        } else if (params.contains(QStringLiteral("handle"))) {
+            QObject *o = resolve(params, reply);
+            if (!o)
+                return;
+            elements.push_back(o);
+        }
+
+        // QML objects are evaluated by their own engine, so QML types and values work natively
+        QJSEngine *engine = nullptr;
+        if (elements.size() == 1 && !many)
+            engine = qmlEngine(elements.first());
+        if (!engine) {
+            if (!m_jsEngine) {
+                ProbeGuard guard;
+                auto e = new QJSEngine(this);
+                e->installExtensions(QJSEngine::ConsoleExtension);
+                QJSEngine::setObjectOwnership(QCoreApplication::instance(), QJSEngine::CppOwnership);
+                e->globalObject().setProperty(QStringLiteral("qApp"), e->newQObject(QCoreApplication::instance()));
+                m_jsEngine = e;
+            }
+            engine = static_cast<QJSEngine *>(m_jsEngine);
+        }
+
+        const QString source = params.value(QStringLiteral("function")).toString();
+        QJSValue fn = engine->evaluate(QStringLiteral("(") + source + QStringLiteral("\n)"));
+        if (fn.isError()) {
+            reply->fail(Failed, QStringLiteral("evaluate: %1").arg(fn.toString()));
+            return;
+        }
+        QJSValue result;
+        if (fn.isCallable()) {
+            QJSValueList args;
+            if (many) {
+                QJSValue arr = engine->newArray(uint(elements.size()));
+                for (int i = 0; i < elements.size(); ++i) {
+                    QJSEngine::setObjectOwnership(elements.at(i), QJSEngine::CppOwnership);
+                    arr.setProperty(quint32(i), engine->newQObject(elements.at(i)));
+                }
+                args.push_back(arr);
+            } else if (!elements.isEmpty()) {
+                QJSEngine::setObjectOwnership(elements.first(), QJSEngine::CppOwnership);
+                args.push_back(engine->newQObject(elements.first()));
+            }
+            QString error;
+            const QVariant arg = jsonToVariant(params.value(QStringLiteral("arg")), QMetaType(), m_mapper, &error);
+            if (!error.isEmpty()) {
+                reply->fail(InvalidParams, error);
+                return;
+            }
+            args.push_back(arg.metaType().flags() & QMetaType::PointerToQObject
+                               ? engine->newQObject(arg.value<QObject *>())
+                               : engine->toScriptValue(arg));
+            result = fn.call(args);
+        } else {
+            result = fn; // a plain expression
+        }
+        if (result.isError()) {
+            reply->fail(Failed, QStringLiteral("evaluate: %1\n%2").arg(result.toString(), result.property(QStringLiteral("stack")).toString()));
+            return;
+        }
+        reply->ok(QJsonObject { { QStringLiteral("value"), jsToJson(result, m_mapper) } });
+#else
+        Q_UNUSED(params);
+        reply->fail(Failed, QStringLiteral("evaluate() needs the automation plugin built with Qt QML"));
+#endif
+    };
+
+    h[QStringLiteral("blur")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        if (QObject *obj = resolve(params, reply)) {
+            Element::blur(obj);
+            reply->ok();
+        }
+    };
+
+    h[QStringLiteral("ariaSnapshot")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        QJsonArray roots;
+        if (params.contains(QStringLiteral("handle"))) {
+            QObject *obj = resolve(params, reply);
+            if (!obj)
+                return;
+            roots.push_back(accessibilityNode(obj, 0));
+        } else {
+            const auto windows = Element::topLevelWindows();
+            for (QObject *w : windows)
+                roots.push_back(accessibilityNode(w, 0));
+        }
+        reply->ok(QJsonObject { { QStringLiteral("nodes"), roots } });
+    };
+
+    // all windows composed into one image (with pointer), e.g. for traces
+    h[QStringLiteral("screenshotAll")] = [](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        Recorder::Options opts;
+        opts.scale = params.value(QStringLiteral("scale")).toDouble(1.0);
+        opts.chrome = params.value(QStringLiteral("chrome")).toBool(true);
+        opts.cursor = params.value(QStringLiteral("cursor")).toBool(true);
+        ProbeGuard guard;
+        Recorder recorder(0, opts, nullptr);
+        const QImage img = recorder.snapshot();
+        const bool jpeg = params.value(QStringLiteral("format")).toString() == QLatin1String("jpeg");
+        QByteArray data;
+        QBuffer buffer(&data);
+        buffer.open(QIODevice::WriteOnly);
+        img.save(&buffer, jpeg ? "JPEG" : "PNG", jpeg ? params.value(QStringLiteral("quality")).toInt(80) : -1);
+        reply->ok(QJsonObject { { QStringLiteral("image"), QString::fromLatin1(data.toBase64()) },
+                                { QStringLiteral("format"), jpeg ? QStringLiteral("jpeg") : QStringLiteral("png") },
+                                { QStringLiteral("width"), img.width() },
+                                { QStringLiteral("height"), img.height() } });
+    };
+
+    // --- touch ---
+    h[QStringLiteral("tap")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        QObject *target = resolve(params, reply);
+        if (!target)
+            return;
+        const QPointer<QObject> obj(target);
+        const QPointF local = positionParam(target, params);
+        auto window = std::make_shared<QPointer<QWindow>>();
+        auto pos = std::make_shared<QPointF>();
+        m_input->enqueue([=]() {
+            QString err;
+            const auto t = obj ? Element::inputTarget(obj, local, &err) : Element::InputTarget();
+            if (!t.window) {
+                reply->fail(obj ? NotActionable : StaleHandle, obj ? err : QStringLiteral("element was destroyed before the tap"));
+                return;
+            }
+            *window = t.window;
+            *pos = t.windowPos;
+            Input::touchPress(t.window, t.windowPos);
+        });
+        m_input->enqueue([=]() {
+            if (reply->isDone())
+                return;
+            reply->ok();
+            Input::touchRelease(*window, *pos);
+        });
+    };
+
+    // --- low-level mouse, in global (screen) coordinates like Locator.boundingBox() ---
+    h[QStringLiteral("mouseMove")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        const QPointF to(params.value(QStringLiteral("x")).toDouble(), params.value(QStringLiteral("y")).toDouble());
+        const int steps = qBound(1, params.value(QStringLiteral("steps")).toInt(1), 500);
+        const auto pointer = Input::pointerState();
+        const QPointF from = pointer.window ? pointer.window->mapToGlobal(pointer.pos) : to;
+        for (int i = 1; i <= steps; ++i) {
+            m_input->enqueue([=]() {
+                if (reply->isDone())
+                    return;
+                const QPointF p = from + (to - from) * (qreal(i) / steps);
+                QPointF local;
+                QWindow *w = Element::windowAt(p, &local);
+                if (i == steps)
+                    reply->ok();
+                if (w)
+                    Input::mouseMove(w, local);
+            });
+        }
+    };
+    auto mouseButton = [this](bool down) {
+        return [this, down](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+            bool ok = false;
+            const auto button = Input::parseButton(params.value(QStringLiteral("button")).toString(), &ok);
+            if (!ok) {
+                reply->fail(InvalidParams, QStringLiteral("invalid mouse button"));
+                return;
+            }
+            const int clickCount = params.value(QStringLiteral("clickCount")).toInt(1);
+            m_input->enqueue([=]() {
+                const auto pointer = Input::pointerState();
+                if (!pointer.window) {
+                    reply->fail(NotActionable, QStringLiteral("the mouse is not over a window: call mouse.move() first"));
+                    return;
+                }
+                reply->ok();
+                if (down)
+                    Input::mousePress(pointer.window, pointer.pos, button);
+                else
+                    Input::mouseRelease(pointer.window, pointer.pos, button, Qt::NoModifier, clickCount <= 1);
+            });
+        };
+    };
+    h[QStringLiteral("mouseDown")] = mouseButton(true);
+    h[QStringLiteral("mouseUp")] = mouseButton(false);
+    h[QStringLiteral("mouseWheel")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        const QPoint delta(-params.value(QStringLiteral("deltaX")).toInt(), -params.value(QStringLiteral("deltaY")).toInt());
+        m_input->enqueue([=]() {
+            const auto pointer = Input::pointerState();
+            if (!pointer.window) {
+                reply->fail(NotActionable, QStringLiteral("the mouse is not over a window: call mouse.move() first"));
+                return;
+            }
+            reply->ok();
+            Input::wheel(pointer.window, pointer.pos, delta);
+        });
+    };
+
+    // --- low-level keyboard: to the focus window ---
+    auto keyHandler = [this](bool down) {
+        return [this, down](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+            Input::KeySpec key;
+            QString error;
+            if (!Input::parseKey(params.value(QStringLiteral("key")).toString(), &key, &error)) {
+                reply->fail(InvalidParams, error);
+                return;
+            }
+            m_input->enqueue([=]() {
+                QWindow *w = QGuiApplication::focusWindow();
+                if (!w) {
+                    reply->fail(NotActionable, QStringLiteral("no window has keyboard focus"));
+                    return;
+                }
+                reply->ok();
+                if (down)
+                    Input::keyPress(w, key.key, key.modifiers, key.text);
+                else
+                    Input::keyRelease(w, key.key, key.modifiers, key.text);
+            });
+        };
+    };
+    h[QStringLiteral("keyDown")] = keyHandler(true);
+    h[QStringLiteral("keyUp")] = keyHandler(false);
+    h[QStringLiteral("insertText")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        const QString text = params.value(QStringLiteral("text")).toString();
+        m_input->enqueue([=]() {
+            QString error;
+            if (Input::insertText(text, &error))
+                reply->ok();
+            else
+                reply->fail(NotActionable, error);
+        });
+    };
+
+    // --- QComboBox option selection through its popup, with real clicks ---
+    h[QStringLiteral("selectOption")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        QObject *target = resolve(params, reply);
+        if (!target)
+            return;
+#ifdef QT_WIDGETS_LIB
+        auto combo = qobject_cast<QComboBox *>(target);
+        if (!combo) {
+            reply->fail(NotFound, QStringLiteral("not a QComboBox"));
+            return;
+        }
+        int idx = -1;
+        if (params.contains(QStringLiteral("index"))) {
+            idx = params.value(QStringLiteral("index")).toInt();
+        } else if (params.contains(QStringLiteral("label"))) {
+            idx = combo->findText(params.value(QStringLiteral("label")).toString(), Qt::MatchExactly);
+        } else if (params.contains(QStringLiteral("value"))) {
+            const QString value = params.value(QStringLiteral("value")).toString();
+            for (int i = 0; i < combo->count() && idx < 0; ++i) {
+                const QVariant data = combo->itemData(i);
+                if ((data.isValid() && data.toString() == value) || combo->itemText(i) == value)
+                    idx = i;
+            }
+        }
+        if (idx < 0 || idx >= combo->count()) {
+            QStringList options;
+            for (int i = 0; i < combo->count(); ++i)
+                options.push_back(combo->itemText(i));
+            reply->fail(NotFound, QStringLiteral("no such option; options are: %1").arg(options.join(QStringLiteral(", "))));
+            return;
+        }
+
+        const QPointer<QComboBox> box(combo);
+        struct State
+        {
+            QPointer<QWindow> window;
+            QPointF pos;
+        };
+        auto state = std::make_shared<State>();
+        // open the popup like a user: press + release on the combo box
+        m_input->enqueue([=]() {
+            QString err;
+            const auto t = box ? Element::inputTarget(box, Element::defaultClickPosition(box), &err) : Element::InputTarget();
+            if (!t.window) {
+                reply->fail(box ? NotActionable : StaleHandle, box ? err : QStringLiteral("combo box was destroyed"));
+                return;
+            }
+            state->window = t.window;
+            state->pos = t.windowPos;
+            Input::mouseMove(t.window, t.windowPos);
+            Input::mousePress(t.window, t.windowPos, Qt::LeftButton);
+        });
+        m_input->enqueue([=]() {
+            if (!reply->isDone())
+                Input::mouseRelease(state->window, state->pos, Qt::LeftButton);
+        });
+        // then click the item in the popup list
+        m_input->enqueue([=]() {
+            if (reply->isDone() || !box)
+                return;
+            QAbstractItemView *view = box->view();
+            if (!view || !view->isVisible()) {
+                // no popup (e.g. platform without one): select directly
+                box->setCurrentIndex(idx);
+                reply->ok(QJsonObject { { QStringLiteral("selected"), QJsonArray { box->itemText(idx) } } });
+                return;
+            }
+            const QModelIndex mi = box->model()->index(idx, box->modelColumn(), box->rootModelIndex());
+            view->scrollTo(mi);
+            QWidget *viewport = view->viewport();
+            QWidget *top = viewport->window();
+            state->window = top->windowHandle();
+            state->pos = viewport->mapTo(top, QPointF(view->visualRect(mi).center()));
+            if (state->window) {
+                Input::mouseMove(state->window, state->pos);
+                Input::mousePress(state->window, state->pos, Qt::LeftButton);
+            }
+        });
+        m_input->enqueue([=]() {
+            if (reply->isDone())
+                return;
+            reply->ok(QJsonObject { { QStringLiteral("selected"), QJsonArray { box ? box->itemText(idx) : QString() } } });
+            Input::mouseRelease(state->window, state->pos, Qt::LeftButton);
+        });
+#else
+        reply->fail(NotFound, QStringLiteral("not a QComboBox"));
+#endif
     };
 }

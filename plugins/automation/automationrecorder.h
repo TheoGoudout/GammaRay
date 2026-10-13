@@ -73,6 +73,12 @@ public:
         return m_clock.elapsed();
     }
 
+    /*! One composed frame of all windows, without streaming anything. */
+    QImage snapshot()
+    {
+        return compose();
+    }
+
     /*! Starts capturing; the first frame is sent right away. */
     void start();
     /*! Sends a final frame and stops. */

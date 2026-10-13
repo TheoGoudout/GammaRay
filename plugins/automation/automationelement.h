@@ -91,6 +91,48 @@ bool focus(QObject *obj, QString *error);
 /*! Renders @p obj (or its whole window if @p wholeWindow) to an image. */
 QImage grab(QObject *obj, bool wholeWindow, QString *error);
 
+/*! Accessibility information (from QAccessibleInterface), with ARIA-style role names. */
+struct AccessibleInfo
+{
+    bool valid = false;
+    QString role; // ARIA role name ("button", "textbox", ...) or Qt role name in lower case
+    QString qtRole; // QAccessible::Role key in lower case ("pushbutton", "editabletext", ...)
+    QString name;
+    QString description;
+    QString value;
+    bool checked = false;
+    bool checkable = false;
+    bool disabled = false;
+    bool expanded = false;
+    bool expandable = false;
+    bool selected = false;
+    bool pressed = false;
+    bool focused = false;
+    bool readOnly = false;
+    bool invisible = false;
+    int level = 0;
+};
+AccessibleInfo accessible(QObject *obj);
+/*! Activates Qt's accessibility support (needed for Qt Quick); done lazily on first use. */
+void ensureAccessibilityActive();
+
+/*! Accessible children of @p obj (QAccessibleInterface::child), as QObjects. */
+QVector<QObject *> accessibleChildren(QObject *obj);
+
+/*! Whether @p obj is an editable input: -1 not an input at all, 0 read-only/disabled, 1 editable. */
+int editableState(const QObject *obj);
+
+/*! Fraction (0..1) of @p obj's area that is inside its window and all clipping ancestors. */
+qreal viewportRatio(QObject *obj);
+
+/*! Stacking order rank of a top-level window (higher is on top). */
+int stackingRank(QObject *window);
+/*! The topmost visible window containing the global point @p global; @p localPos is set. */
+QWindow *windowAt(QPointF global, QPointF *localPos);
+
+/*! Removes keyboard focus from @p obj. */
+void blur(QObject *obj);
+
 /*! Visible top-level windows (QWidget windows and QWindows), as QObjects.
  *  Popups (menus, combo box lists, tool tips) only with @p includePopups. */
 QVector<QObject *> topLevelWindows(bool includePopups = false);
