@@ -16,6 +16,7 @@
 
 #include "objectmodelbase.h"
 
+#include <QSet>
 #include <QVector>
 
 namespace GammaRay {
@@ -49,6 +50,17 @@ private:
     QHash<QObject *, QObject *> m_childParentMap;
     QHash<QObject *, QVector<QObject *>> m_parentChildMap;
     QSet<QObject *> m_favorites;
+    QVariant displayData(QObject *obj, const QModelIndex &index) const;
+    Q_INVOKABLE void flushDisplayChanges();
+
+    // Display texts (columns 0 and 1) as last reported for each row. A (recursive) filter
+    // proxy on top of this model must see the same text for a row until dataChanged() is
+    // emitted for it, or its mapping gets corrupted. Without the cache that happens when an
+    // object is deleted in another thread (its row stays until the queued objectRemoved()
+    // runs), when its address is reused by a new object in the meantime, or when it is
+    // renamed. Changed texts are therefore only published together with dataChanged().
+    mutable QHash<QObject *, QPair<QString, QString>> m_displayCache;
+    mutable QSet<QObject *> m_displayChanged;
 };
 }
 

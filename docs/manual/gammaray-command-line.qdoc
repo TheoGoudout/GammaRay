@@ -70,6 +70,10 @@
         \li Disables the GammaRay server. This implies \c --inprocess as there is no
         other way to connect to the GammaRay probe in this case.
     \row
+        \li \c{--probe-setting <key>=<value>}
+        \li Pass an additional setting to the probe; can be used multiple times. For example
+        \c{--probe-setting AutomationPort=0} enables the automation server used by end-to-end tests.
+    \row
         \li \c --list-probes
         \li List all installed probes.
     \row

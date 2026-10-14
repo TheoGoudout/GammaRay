@@ -1,0 +1,51 @@
+{
+    "name": "qt-playwright",
+    "version": "0.1.0",
+    "description": "Playwright-style end-to-end testing for Qt (Widgets and Qt Quick) applications, powered by GammaRay",
+    "license": "GPL-2.0-or-later",
+    "main": "dist/index.js",
+    "bin": {
+        "qt-playwright": "dist/cli.js"
+    },
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./test": {
+            "types": "./dist/test.d.ts",
+            "default": "./dist/test.js"
+        }
+    },
+    "files": [
+        "dist",
+        "src"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "test": "node --test test/*.test.mjs",
+        "prepare": "tsc -p tsconfig.json"
+    },
+    "engines": {
+        "node": ">=18"
+    },
+    "dependencies": {
+        "ws": "^8.18.0"
+    },
+    "peerDependencies": {
+        "@playwright/test": ">=1.40"
+    },
+    "peerDependenciesMeta": {
+        "@playwright/test": {
+            "optional": true
+        }
+    },
+    "devDependencies": {
+        "@playwright/test": "^1.56.1",
+        "@types/node": "^22.20.0",
+        "@types/ws": "^8.18.0",
+        "typescript": "~5.9.3"
+    }
+}

@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <utility>
 
 #define IF_DEBUG(x)
 
@@ -69,6 +70,7 @@ void ObjectTreeModel::objectAdded(QObject *obj)
         IF_DEBUG(cout << "tree double obj added: " << hex << obj << endl;)
         return;
     }
+    m_displayCache.remove(obj); // a new object at the address of a deleted one
 
     // this is ugly, but apparently it can happen
     // that an object gets created without parent
@@ -114,19 +116,24 @@ void ObjectTreeModel::objectRemoved(QObject *obj)
     auto parentIt = m_childParentMap.constFind(obj);
     if (parentIt == m_childParentMap.cend()) {
         Q_ASSERT(!m_parentChildMap.contains(obj));
+        m_displayCache.remove(obj);
         return;
     }
 
     QObject *parentObj = parentIt.value();
     const QModelIndex parentIndex = indexForObject(parentObj);
-    if (parentObj && !parentIndex.isValid())
+    if (parentObj && !parentIndex.isValid()) {
+        m_displayCache.remove(obj);
         return;
+    }
 
     QVector<QObject *> &siblings = m_parentChildMap[parentObj];
 
     auto it = std::lower_bound(siblings.begin(), siblings.end(), obj);
-    if (it == siblings.end() || *it != obj)
+    if (it == siblings.end() || *it != obj) {
+        m_displayCache.remove(obj);
         return;
+    }
     const int row = std::distance(siblings.begin(), it);
 
     beginRemoveRows(parentIndex, row, row);
@@ -137,6 +144,8 @@ void ObjectTreeModel::objectRemoved(QObject *obj)
     m_favorites.remove(obj);
 
     endRemoveRows();
+    m_displayCache.remove(obj);
+    m_displayChanged.remove(obj);
 }
 
 void ObjectTreeModel::objectReparented(QObject *obj)
@@ -216,19 +225,64 @@ QVariant ObjectTreeModel::data(const QModelIndex &index, int role) const
     QObject *obj = reinterpret_cast<QObject *>(index.internalPointer());
 
     QMutexLocker lock(Probe::objectLock());
+    if (role == Qt::DisplayRole && index.column() <= 1)
+        return displayData(obj, index);
     if (Probe::instance()->isValidObject(obj)) {
         if (role == ObjectModel::IsFavoriteRole) {
             return m_favorites.contains(obj);
         }
         return dataForObject(obj, index, role);
     }
-    if (role == Qt::DisplayRole) {
-        if (index.column() == 0)
-            return Util::addressToString(obj);
+    if (role == Qt::DisplayRole)
         return tr("<deleted>");
-    }
 
     return QVariant();
+}
+
+// pre-condition: the object lock is held
+QVariant ObjectTreeModel::displayData(QObject *obj, const QModelIndex &index) const
+{
+    const bool valid = Probe::instance()->isValidObject(obj);
+    QString current;
+    if (valid)
+        current = dataForObject(obj, index, Qt::DisplayRole).toString();
+    else
+        current = index.column() == 0 ? Util::addressToString(obj) : tr("<deleted>");
+
+    auto &cachedRow = m_displayCache[obj];
+    QString &cached = index.column() == 0 ? cachedRow.first : cachedRow.second;
+    if (cached.isNull()) {
+        cached = current;
+        return cached;
+    }
+    // a deleted object keeps its last text until its row is removed; anything else that
+    // changed is published with a dataChanged() signal, outside of data()
+    if (valid && current != cached && !m_displayChanged.contains(obj)) {
+        m_displayChanged.insert(obj);
+        if (m_displayChanged.size() == 1)
+            QMetaObject::invokeMethod(const_cast<ObjectTreeModel *>(this), "flushDisplayChanges", Qt::QueuedConnection);
+    }
+    return cached;
+}
+
+void ObjectTreeModel::flushDisplayChanges()
+{
+    QVector<QModelIndex> changed;
+    {
+        QMutexLocker lock(Probe::objectLock());
+        const auto objects = std::exchange(m_displayChanged, {});
+        for (QObject *obj : objects) {
+            const QModelIndex index = indexForObject(obj);
+            if (!index.isValid() || !Probe::instance()->isValidObject(obj))
+                continue;
+            auto &cachedRow = m_displayCache[obj];
+            cachedRow.first = dataForObject(obj, index, Qt::DisplayRole).toString();
+            cachedRow.second = dataForObject(obj, index.sibling(index.row(), 1), Qt::DisplayRole).toString();
+            changed.push_back(index);
+        }
+    }
+    for (const QModelIndex &index : std::as_const(changed))
+        emit dataChanged(index, index.sibling(index.row(), 1), { Qt::DisplayRole });
 }
 
 int ObjectTreeModel::rowCount(const QModelIndex &parent) const

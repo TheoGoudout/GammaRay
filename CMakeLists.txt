@@ -462,6 +462,7 @@ find_package(
         Svg
         Test
         WebEngineWidgets
+        WebSockets
         Widgets
         WaylandCompositor
 )

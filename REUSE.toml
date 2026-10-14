@@ -12,21 +12,21 @@ SPDX-License-Identifier = "GPL-2.0-or-later"
 
 #misc documentation
 [[annotations]]
-path = ["CHANGES", "CONTRIBUTORS.txt", "INSTALL.md", "README.md", "docs/manual/style/**", "ui/resources/gammaray/ui/icons/classes/**/**", "docs/api/**.dox", "docs/api/**.html", "docs/man/**.pod", "docs/**.pdf"]
+path = ["CHANGES", "CONTRIBUTORS.txt", "INSTALL.md", "README.md", "automation/**.md", "docs/manual/style/**", "ui/resources/gammaray/ui/icons/classes/**/**", "docs/api/**.dox", "docs/api/**.html", "docs/man/**.pod", "docs/**.pdf"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "Klarälvdalens Datakonsult AB, a KDAB Group company <info@kdab.com>"
 SPDX-License-Identifier = "GPL-2.0-or-later"
 
 #misc config files
 [[annotations]]
-path = ["version.txt", "3rdparty/**/qt_attribution.json", ".clang-format", ".clang-tidy", ".clangd", ".clazy", ".cmake-format.py", ".codespellrc", ".emacs-dirvars", ".git-blame-ignore-revs", ".gitattributes", ".gitignore", ".kateconfig", ".krazy", ".mdlrc", ".mdlrc.rb", ".pep8", ".pre-commit-config.yaml", ".pylintrc", ".qmake.conf", ".editorconfig", ".shellcheckrc", ".tag", "distro/**", "format.config.uncrustify.4_spaces", "**.qdocconf", "format_sources", "docs/collection/gammaray.qhcp.cmake", "examples/yocto/gammaray_git**.bb", "probe/gammaray_probe-android-dependencies.xml", "docs/api/Doxyfile.cmake", ".github/**", "REUSE.toml", "3rdparty/.clang-format"]
+path = ["version.txt", "3rdparty/**/qt_attribution.json", ".clang-format", ".clang-tidy", ".clangd", ".clazy", ".cmake-format.py", ".codespellrc", ".emacs-dirvars", ".git-blame-ignore-revs", ".gitattributes", ".gitignore", ".kateconfig", ".krazy", ".mdlrc", ".mdlrc.rb", ".pep8", ".pre-commit-config.yaml", ".pylintrc", ".qmake.conf", ".editorconfig", ".shellcheckrc", ".tag", "distro/**", "format.config.uncrustify.4_spaces", "**.qdocconf", "format_sources", "docs/collection/gammaray.qhcp.cmake", "examples/yocto/gammaray_git**.bb", "probe/gammaray_probe-android-dependencies.xml", "docs/api/Doxyfile.cmake", ".github/**", "REUSE.toml", "3rdparty/.clang-format", "automation/**/.gitignore", "automation/**/.npmrc"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "Klarälvdalens Datakonsult AB, a KDAB Group company <info@kdab.com>"
 SPDX-License-Identifier = "BSD-3-Clause"
 
 #artwork
 [[annotations]]
-path = ["ui/resources/gammaray/**.png", "plugins/guisupport/images/**.png", "ui/resources/gammaray/ui/icons/classes/**/**.png", "ui/resources/gammaray/ui/**/**/**.png", "docs/manual/**/**.png", "docs/api/**.png", "tests/manual/**.png", "plugins/positioning/**.png", "plugins/quickinspector/textureextension/resources/**.png", "launcher/ui/resources/launcher/**.png", "ui/resources/svg/**.svg", "ui/resources/svg/**.svgz", "plugins/positioning/direction_marker.svg", "ui/resources/gammaray/GammaRay.icns", "ui/resources/gammaray/GammaRay.ico"]
+path = ["ui/resources/gammaray/**.png", "plugins/guisupport/images/**.png", "ui/resources/gammaray/ui/icons/classes/**/**.png", "ui/resources/gammaray/ui/**/**/**.png", "docs/manual/**/**.png", "docs/api/**.png", "tests/manual/**.png", "plugins/positioning/**.png", "plugins/quickinspector/textureextension/resources/**.png", "launcher/ui/resources/launcher/**.png", "ui/resources/svg/**.svg", "ui/resources/svg/**.svgz", "plugins/positioning/direction_marker.svg", "automation/docs/**.png", "automation/docs/**.gif", "automation/examples/tests/**-snapshots/**.png", "ui/resources/gammaray/GammaRay.icns", "ui/resources/gammaray/GammaRay.ico"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "Klarälvdalens Datakonsult AB, a KDAB Group company <info@kdab.com>"
 SPDX-License-Identifier = "GPL-2.0-or-later"

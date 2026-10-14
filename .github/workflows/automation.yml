@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: 2026 Klarälvdalens Datakonsult AB, a KDAB Group company <info@kdab.com>
+#
+# SPDX-License-Identifier: MIT
+
+# End-to-end tests of the qt-playwright automation framework (automation/), headless.
+name: Automation e2e
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "automation/**"
+      - "plugins/automation/**"
+      - "core/**"
+      - "probe/**"
+      - "launcher/**"
+      - ".github/workflows/automation.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "automation/**"
+      - "plugins/automation/**"
+      - "core/**"
+      - "probe/**"
+      - "launcher/**"
+      - ".github/workflows/automation.yml"
+
+jobs:
+  e2e:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          aqtversion: null
+          version: "6.8.3"
+          modules: qtwebsockets
+          cache: true
+
+      - name: Checkout sources
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt update -qq
+          sudo apt install -y gdb ffmpeg libgl1-mesa-dev libxkbcommon-dev
+
+      - name: Install ninja-build tool (must be after Qt due PATH changes)
+        uses: turtlesec-no/get-ninja@main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable gdb attaching (for the attach-by-pid test)
+        run: echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+
+      - name: Build and run the e2e suite
+        run: automation/run-e2e.sh
+        env:
+          CI: "1"
+
+      - name: Upload Playwright report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            automation/examples/playwright-report
+            automation/examples/test-results
+          retention-days: 7
