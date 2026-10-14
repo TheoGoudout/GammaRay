@@ -424,6 +424,22 @@ traces and attaches them to the report: `'on'`, `'retain-on-failure'`,
 
 ![Playwright's trace viewer with a qt-playwright trace](docs/playwright-trace-viewer.png)
 
+### UI mode
+
+Playwright's UI mode works with qt-playwright tests as they are:
+
+```sh
+npx playwright test --ui
+```
+
+It lists, filters, runs and watches the tests. For each test it shows the actions with
+the matching source line, the film strip, and before/after snapshots of the
+application with the target highlighted (from the traces described above, which UI
+mode turns on). `--ui-host`/`--ui-port` serve it to a browser, e.g. from a headless
+machine.
+
+![Playwright's UI mode running a qt-playwright test](docs/ui-mode.png)
+
 ### Inspector and debugging
 
 `app.pause()` opens the inspector, Playwright's Inspector adapted to Qt. It is a local
@@ -581,7 +597,7 @@ later requests are served from the nested event loop.
   paints. Style sheet properties without a palette or font equivalent (margins,
   borders of widgets, gradients) are only available as the raw `-qt-style-sheet` text.
 - **Not available:** Playwright's network interception, clock control, browser
-  contexts and storage state (no Qt equivalent), and UI mode. Trace snapshots are
+  contexts and storage state (no Qt equivalent). Trace snapshots are
   pictures with an element overlay, not live DOM: the viewer's DOM tools beyond
   locator picking (CSS, console evaluation) do not apply.
 - **Platforms:** developed and tested on Linux with Qt 6.8 and the offscreen platform.

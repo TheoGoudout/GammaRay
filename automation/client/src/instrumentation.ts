@@ -10,6 +10,31 @@ export interface StepInfo {
   title: string;
   /** performance.now() when the call started. */
   startTime: number;
+  /** Where the call was made from (the test code), innermost first. */
+  stack: StackFrame[];
+}
+
+export interface StackFrame {
+  file: string;
+  line: number;
+  column: number;
+  function?: string;
+}
+
+// frames inside qt-playwright itself (src/ or dist/) are not interesting for users
+const OWN_DIR = __dirname;
+
+/** The caller's stack, without qt-playwright and Node internals. */
+function captureStack(): StackFrame[] {
+  const frames: StackFrame[] = [];
+  for (const line of (new Error().stack ?? '').split('\n').slice(1)) {
+    const m = line.match(/^\s*at (?:(.*?) \()?(.*?):(\d+):(\d+)\)?$/);
+    if (!m) continue;
+    const file = m[2].replace(/^file:\/\//, '');
+    if (file.startsWith(OWN_DIR) || file.startsWith('node:') || file.includes('/node_modules/')) continue;
+    frames.push({ file, line: Number(m[3]), column: Number(m[4]), function: m[1] || undefined });
+  }
+  return frames;
 }
 
 /** Where an action is about to deliver input: the element and the point, in global coordinates. */
@@ -51,7 +76,7 @@ export function removeStepListener(l: StepListener): void {
 export async function step<T>(title: string, body: () => Promise<T>): Promise<T> {
   if (depth > 0 || (!runner && listeners.size === 0)) return body();
   ++depth;
-  const info: StepInfo = { id: nextId++, title, startTime: performance.now() };
+  const info: StepInfo = { id: nextId++, title, startTime: performance.now(), stack: listeners.size ? captureStack() : [] };
   const started = Date.now();
   current = info;
   let error: unknown;

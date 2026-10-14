@@ -286,3 +286,15 @@ option preferred. Newest entries go at the bottom.
   together with `dataChanged()`, from a queued call. This is outside the automation
   feature, but it was needed for a green CI, and it is a small, contained change to
   one model.
+
+## D27. UI mode: reuse Playwright's
+
+- Options: (a) reimplement a UI mode (test tree, run/watch, trace view); (b) reuse
+  Playwright's.
+- **Chosen: (b), no new code beyond call stacks.** UI mode is part of `@playwright/test`,
+  which already runs qt-playwright tests. It turns tracing on, and the `app` fixture
+  attaches Playwright-format traces (D20), so UI mode shows actions, film strip and
+  snapshots. The only addition: each action records the test's call site (stack
+  frames outside qt-playwright), so the Source tab highlights the line. Screenshots are
+  stored as network resources (D20) and therefore show up in the Network tab, a
+  cosmetic side effect.

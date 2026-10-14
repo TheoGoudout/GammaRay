@@ -7,9 +7,9 @@ auto-waiting and strict mode, actions, and retrying assertions (ARIA snapshots,
 screenshot baselines and `toHaveCSS` included). It also has `evaluate`,
 coordinate-level input, dialogs and file choosers, video, traces that Playwright's own
 trace viewer opens, an inspector, and codegen. Some features are adapted rather than
-identical, because Qt has no DOM, no CSS and no page JavaScript. What remains missing
-is tied to browsers (network interception, clock control, browser contexts and
-storage) or to UI mode.
+identical, because Qt has no DOM, no CSS and no page JavaScript. Playwright's UI mode
+and trace viewer work as they are. What remains missing is tied to browsers (network
+interception, clock control, browser contexts and storage).
 
 Legend: ✅ same name and semantics · ≈ same idea, adapted to Qt · ❌ missing ·
 ➕ qt-playwright only.
@@ -30,7 +30,7 @@ Legend: ✅ same name and semantics · ≈ same idea, adapted to Qt · ❌ missi
 | API calls as report steps | yes, described like Playwright (`getByRole('button', { name: 'OK' }).click`) | ✅ |
 | `expect.soft`, `expect.poll`, `expect.configure`, generic matchers | passed through to Playwright's `expect` | ✅ |
 | `PWDEBUG=1`, inspector, `codegen` | `QTPW_DEBUG=1`, the inspector (web page), `qt-playwright codegen <app>` | ≈ |
-| UI mode | — | ❌ |
+| UI mode (`--ui`) | Playwright's own UI mode: run, filter, watch; actions with source lines, film strip and snapshots | ✅ |
 
 ## Launching
 
@@ -115,10 +115,10 @@ Legend: ✅ same name and semantics · ≈ same idea, adapted to Qt · ❌ missi
 | Trace viewer (`trace.zip`, `show-trace`) | Playwright's own viewer: actions, call logs, errors, film strip, snapshots (screenshot + element overlay) with locator picking | ✅ |
 | `codegen` | `qt-playwright codegen <app>`: role/label/test-id locators, item view rows, fill, press, check, selectOption, modifiers, drags | ✅ |
 | Inspector | web inspector: live view, pick locator, locator playground with highlights, resume / step over, recording; `qt-playwright inspect <app>` | ≈ |
-| UI mode, VS Code extension | — (the GammaRay client inspects objects, properties and signals in depth) | ❌ |
+| UI mode | Playwright's own (`npx playwright test --ui`) | ✅ |
+| VS Code extension | runs tests through `@playwright/test` like any project; untested | ≈ |
 
 ## Remaining gaps
 
-1. UI mode (watch mode, time-travel through a test run) and the VS Code extension.
-2. Live DOM in trace snapshots: snapshots are pictures with an element overlay, so the
+1. Live DOM in trace snapshots: snapshots are pictures with an element overlay, so the
    viewer's DOM-specific tools (CSS inspection, console evaluation) do not apply.

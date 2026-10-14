@@ -54,6 +54,8 @@ test('tracing writes Playwright trace.zip files', async ({ app }, testInfo) => {
 
   // the click has an input point and before/action/after snapshots marking the target
   const click = ofType('before').find((e) => e.title.endsWith(".getByRole('button', { name: 'Login' }).click"));
+  // the call site, for the viewer's Source tab (and UI mode)
+  expect(click.stack[0]).toMatchObject({ file: expect.stringMatching(/trace\.spec\.ts$/), line: 34 });
   expect(ofType('input').find((e) => e.callId === click.callId).point).toEqual({ x: expect.any(Number), y: expect.any(Number) });
   const snapshots = ofType('frame-snapshot').filter((e) => e.snapshot.callId === click.callId);
   expect(snapshots.map((s) => s.snapshot.phase)).toEqual(['before', 'action', 'after']);

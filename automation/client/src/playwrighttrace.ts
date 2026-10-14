@@ -111,6 +111,8 @@ export class PlaywrightTraceRecorder {
       method,
       params: selector ? { selector } : {},
       pageId: PAGE_ID,
+      // the viewer's Source tab shows the test line of each action
+      stack: step.stack.length ? step.stack : undefined,
     });
     await this.snapshot(step, 'before');
   }
