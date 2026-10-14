@@ -27,6 +27,8 @@ if(NOT GAMMARAY_CLIENT_ONLY_BUILD)
         automationrecorder.h
         automationselector.cpp
         automationselector.h
+        automationstyle.cpp
+        automationstyle.h
     )
 
     gammaray_add_plugin(
@@ -46,6 +48,7 @@ if(NOT GAMMARAY_CLIENT_ONLY_BUILD)
         Qt::WebSockets
     )
     if(TARGET Qt::Widgets)
+        target_sources(gammaray_automation PRIVATE automationitemview.cpp automationitemview.h)
         target_link_libraries(gammaray_automation Qt::Widgets)
     endif()
     if(TARGET Qt::Quick)

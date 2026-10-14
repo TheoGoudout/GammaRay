@@ -484,6 +484,7 @@ if(NOT GAMMARAY_CLIENT_ONLY_BUILD)
             automationselectortest.cpp
             ${CMAKE_SOURCE_DIR}/plugins/automation/automationelement.cpp
             ${CMAKE_SOURCE_DIR}/plugins/automation/automationinput.cpp
+            ${CMAKE_SOURCE_DIR}/plugins/automation/automationitemview.cpp
             ${CMAKE_SOURCE_DIR}/plugins/automation/automationselector.cpp
         )
         target_link_libraries(automationselectortest gammaray_core Qt::Widgets Qt::GuiPrivate)

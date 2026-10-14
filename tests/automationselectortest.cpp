@@ -10,15 +10,20 @@
   Contact KDAB at <info@kdab.com> for commercial licensing options.
 */
 
+#include <plugins/automation/automationelement.h>
 #include <plugins/automation/automationinput.h>
+#include <plugins/automation/automationitemview.h>
 #include <plugins/automation/automationselector.h>
 
 #include <QCheckBox>
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPushButton>
+#include <QTableWidget>
 #include <QTest>
+#include <QTreeWidget>
 #include <QVBoxLayout>
 
 #ifdef QT_QUICK_LIB
@@ -287,6 +292,63 @@ private slots:
         QVERIFY(!Input::parseKey(QStringLiteral("Hyper+A"), &k, &error));
         QVERIFY(error.contains(QLatin1String("unknown modifier")));
         QVERIFY(!Input::parseKey(QStringLiteral("NoSuchKey"), &k, &error));
+    }
+
+    void testItemViewRows()
+    {
+        auto layout = m_window->layout();
+        auto list = new QListWidget(m_window.get());
+        list->setObjectName(QStringLiteral("list"));
+        list->addItems({ QStringLiteral("Apple"), QStringLiteral("Banana"), QStringLiteral("Cherry") });
+        layout->addWidget(list);
+        auto tree = new QTreeWidget(m_window.get());
+        tree->setObjectName(QStringLiteral("tree"));
+        auto fruit = new QTreeWidgetItem(tree, { QStringLiteral("Fruit") });
+        new QTreeWidgetItem(fruit, { QStringLiteral("Kiwi") });
+        layout->addWidget(tree);
+        auto table = new QTableWidget(2, 2, m_window.get());
+        table->setObjectName(QStringLiteral("table"));
+        for (int r = 0; r < 2; ++r)
+            for (int c = 0; c < 2; ++c)
+                table->setItem(r, c, new QTableWidgetItem(QStringLiteral("r%1c%2").arg(r).arg(c)));
+        layout->addWidget(table);
+        // added after init() showed the window
+        for (QWidget *w : { static_cast<QWidget *>(list), static_cast<QWidget *>(tree), static_cast<QWidget *>(table) })
+            w->show();
+        m_window->resize(400, 600);
+        QVERIFY(QTest::qWaitForWindowExposed(m_window.get()));
+        QCoreApplication::processEvents();
+
+        // list rows: by role and name, in row order, with geometry from visualRect()
+        auto rows = query(QStringLiteral("#list >> role=listitem"));
+        QCOMPARE(rows.size(), 3);
+        auto banana = qobject_cast<ViewItem *>(rows.at(1));
+        QVERIFY(banana);
+        QCOMPARE(banana->text(), QStringLiteral("Banana"));
+        QCOMPARE(query(QStringLiteral("role=listitem[name=\"Cherry\"]")).size(), 1);
+        QCOMPARE(Element::parent(banana), list);
+        QVERIFY(Element::isVisible(banana));
+        QCOMPARE(Element::globalGeometry(banana).toRect(),
+                 QRect(list->viewport()->mapToGlobal(list->visualItemRect(list->item(1)).topLeft()), list->visualItemRect(list->item(1)).size()));
+        // stand-ins are stable while the row exists, and go away with it
+        QCOMPARE(query(QStringLiteral("#list >> role=listitem")).at(1), banana);
+        const QPointer<ViewItem> guard(banana);
+        delete list->takeItem(1);
+        QCOMPARE(query(QStringLiteral("#list >> role=listitem")).size(), 2);
+        QVERIFY(!guard);
+
+        // tree rows: children only while expanded; level
+        QCOMPARE(query(QStringLiteral("role=treeitem")).size(), 1);
+        tree->expandItem(fruit);
+        const auto kiwi = query(QStringLiteral("role=treeitem[name=\"Kiwi\"]"));
+        QCOMPARE(kiwi.size(), 1);
+        QCOMPARE(Element::accessible(kiwi.first()).level, 2);
+        QCOMPARE(query(QStringLiteral("role=treeitem[name=\"Fruit\"] >> role=treeitem")), kiwi);
+
+        // table rows with cells; a row is named after its cells
+        QCOMPARE(query(QStringLiteral("#table >> role=row")).size(), 2);
+        QCOMPARE(names(query(QStringLiteral("role=row[name=\"r1c0 r1c1\"] >> role=cell"))).size(), 2);
+        QCOMPARE(Element::text(query(QStringLiteral("role=row >> nth=1 >> role=cell >> nth=1")).value(0)), QStringLiteral("r1c1"));
     }
 
     void testTypingUppercaseImpliesShift()

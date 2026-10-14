@@ -257,7 +257,7 @@ export class Locator {
    */
   private async act<T>(
     name: string,
-    options: ActionOptions & { position?: { x: number; y: number } },
+    options: ActionOptions & { position?: { x: number; y: number }; forCheck?: boolean },
     req: Requirements,
     perform: (handle: number) => Promise<T>,
   ): Promise<T> {
@@ -277,6 +277,7 @@ export class Locator {
           let state = await this.app.connection.call<Actionability>('actionability', {
             handle,
             position: options.position,
+            forCheck: options.forCheck,
             checkHitTarget: needsHitTest,
           });
           const waitingFor = (why: string) => ({ done: false, log: `${describeRef(elements[0])}: ${why}` });
@@ -292,6 +293,7 @@ export class Locator {
             const again = await this.app.connection.call<Actionability>('actionability', {
               handle,
               position: options.position,
+              forCheck: options.forCheck,
               checkHitTarget: needsHitTest,
             });
             if (!again.attached) return waitingFor('element was detached');
@@ -437,10 +439,11 @@ export class Locator {
    */
   async selectOption(values: SelectOption | SelectOption[], options: ActionOptions = {}): Promise<string[]> {
     const wanted = Array.isArray(values) ? values : [values];
-    if (wanted.length !== 1) throw new Error(`${this}.selectOption: Qt combo boxes select exactly one option`);
-    const option = typeof wanted[0] === 'string' ? { label: wanted[0], value: wanted[0] } : wanted[0];
     return step(`${this}.selectOption`, async () => {
       const info = await this.describe({ timeout: options.timeout });
+      if (info.typeNames.includes('QAbstractItemView')) return this.selectRows(wanted, options);
+      if (wanted.length !== 1) throw new Error(`${this}.selectOption: combo boxes select exactly one option`);
+      const option = typeof wanted[0] === 'string' ? { label: wanted[0], value: wanted[0] } : wanted[0];
       if (info.typeNames.includes('QComboBox')) {
         return this.act('selectOption', options, { visible: true, enabled: true, stable: true, receivesEvents: true }, async (handle) => {
           const attempts = option.index !== undefined ? [{ index: option.index }] : [
@@ -471,8 +474,40 @@ export class Locator {
         await this.locator('Popup').getByText(label, { exact: true }).visible().click(options);
         return [label];
       }
-      throw new Error(`${this}.selectOption: ${info.type} is not a QComboBox or QML ComboBox`);
+      throw new Error(`${this}.selectOption: ${info.type} is not a QComboBox, QML ComboBox or item view`);
     });
+  }
+
+  /** selectOption() on an item view: clicks the first row, Ctrl+clicks the others (multi-selection). */
+  private async selectRows(wanted: SelectOption[], options: ActionOptions): Promise<string[]> {
+    const rows = wanted.map((w) => {
+      const option = typeof w === 'string' ? { label: w } : w;
+      // only rows, not table cells
+      const any = this.locator('ViewItem[kind!=TableCell]');
+      if (option.index !== undefined) return any.nth(option.index);
+      const label = option.label ?? option.value;
+      if (label === undefined) throw new Error(`${this}.selectOption: an option needs a label, value or index`);
+      return this.locator(`ViewItem[kind!=TableCell]${propertySelector('text', label, true)}`).first();
+    });
+    for (let i = 0; i < rows.length; ++i)
+      await rows[i].click({ ...options, modifiers: i === 0 ? undefined : ['Control'] });
+    return this.selectedValues(options);
+  }
+
+  /** The selected rows of an item view (in row order), or the current text of a combo box. */
+  async selectedValues(options: TimeoutOptions = {}): Promise<string[]> {
+    const handle = await this.handle(options);
+    return (await this.app.connection.call<{ values: string[] }>('selectedValues', { handle })).values;
+  }
+
+  /**
+   * CSS-like computed style (Qt adaptation of getComputedStyle()): color and background-color
+   * from the palette / style sheet or QML colors, font-*, opacity, width, height, visibility,
+   * cursor, border-* for QML Rectangles.
+   */
+  async computedStyle(options: TimeoutOptions = {}): Promise<Record<string, string>> {
+    const handle = await this.handle(options);
+    return (await this.app.connection.call<{ style: Record<string, string> }>('computedStyle', { handle })).style;
   }
 
   /**
@@ -546,7 +581,10 @@ export class Locator {
   async setChecked(checked: boolean, options: ClickOptions = {}): Promise<void> {
     await step(`${this}.setChecked(${checked})`, async () => {
       if ((await this.isChecked(options)) === checked) return;
-      await this.click(options);
+      // item view rows toggle on their check indicator, not in the middle
+      await this.act('click', { ...options, forCheck: true }, { visible: true, enabled: true, stable: true, receivesEvents: true }, (handle) =>
+        this.app.connection.call('click', { handle, ...this.pointerParams(options), forCheck: true }),
+      );
       await poll(`${this}.setChecked`, options.timeout ?? this.app.defaultTimeout, async () => {
         const now = await this.isChecked(options);
         return { done: now === checked, log: `waiting for checked to become ${checked}` };

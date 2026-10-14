@@ -26,7 +26,10 @@
 #include <qpa/qwindowsysteminterface.h>
 
 #ifdef QT_WIDGETS_LIB
+#include "automationitemview.h"
+
 #include <QAbstractButton>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QCheckBox>
 #include <QLabel>
@@ -86,6 +89,19 @@ static QWidget *widgetForWindow(QWindow *window)
 }
 #endif
 
+#ifdef QT_WIDGETS_LIB
+static ViewItem *viewItem(const QObject *obj)
+{
+    return qobject_cast<ViewItem *>(const_cast<QObject *>(obj));
+}
+
+// global geometry of an item view row, in the coordinates of its view's viewport
+static QWidget *viewportOf(const ViewItem *item)
+{
+    return item->view() ? item->view()->viewport() : nullptr;
+}
+#endif
+
 QVector<QObject *> Element::children(QObject *obj)
 {
     QVector<QObject *> result;
@@ -112,6 +128,11 @@ QVector<QObject *> Element::children(QObject *obj)
     }
 #endif
 
+#ifdef QT_WIDGETS_LIB
+    if (viewItem(obj))
+        return ViewItems::children(obj);
+#endif
+
     const auto objs = obj->children();
     for (QObject *child : objs) {
 #ifdef QT_QUICK_LIB
@@ -123,11 +144,23 @@ QVector<QObject *> Element::children(QObject *obj)
 #endif
         add(child);
     }
+#ifdef QT_WIDGETS_LIB
+    // the rows of item views, which have no QObjects of their own
+    if (qobject_cast<QAbstractItemView *>(obj)) {
+        const auto rows = ViewItems::children(obj);
+        for (QObject *row : rows)
+            add(row);
+    }
+#endif
     return result;
 }
 
 QObject *Element::parent(QObject *obj)
 {
+#ifdef QT_WIDGETS_LIB
+    if (auto item = viewItem(obj))
+        return ViewItems::parent(item);
+#endif
 #ifdef QT_QUICK_LIB
     if (auto item = qobject_cast<QQuickItem *>(obj)) {
         if (item->parentItem()) {
@@ -266,7 +299,7 @@ QString Element::displayTypeName(const QObject *obj)
 bool Element::hasGeometry(const QObject *obj)
 {
 #ifdef QT_WIDGETS_LIB
-    if (obj->isWidgetType())
+    if (obj->isWidgetType() || viewItem(obj))
         return true;
 #endif
 #ifdef QT_QUICK_LIB
@@ -281,6 +314,8 @@ bool Element::isVisible(const QObject *obj)
 #ifdef QT_WIDGETS_LIB
     if (auto w = qobject_cast<const QWidget *>(obj))
         return w->isVisible() && !w->size().isEmpty();
+    if (auto item = viewItem(obj))
+        return item->isShown();
 #endif
 #ifdef QT_QUICK_LIB
     if (auto item = qobject_cast<const QQuickItem *>(obj)) {
@@ -306,6 +341,8 @@ bool Element::isEnabled(const QObject *obj)
 #ifdef QT_WIDGETS_LIB
     if (auto w = qobject_cast<const QWidget *>(obj))
         return w->isEnabled();
+    if (auto item = viewItem(obj))
+        return item->isEnabled();
 #endif
 #ifdef QT_QUICK_LIB
     if (auto item = qobject_cast<const QQuickItem *>(obj))
@@ -322,6 +359,11 @@ QRectF Element::globalGeometry(const QObject *obj)
 #ifdef QT_WIDGETS_LIB
     if (auto w = qobject_cast<const QWidget *>(obj))
         return QRectF(QPointF(w->mapToGlobal(QPoint(0, 0))), QSizeF(w->size()));
+    if (auto item = viewItem(obj)) {
+        QWidget *viewport = viewportOf(item);
+        const QRect r = item->viewportRect();
+        return viewport && r.isValid() ? QRectF(QPointF(viewport->mapToGlobal(r.topLeft())), QSizeF(r.size())) : QRectF();
+    }
 #endif
 #ifdef QT_QUICK_LIB
     if (auto item = qobject_cast<const QQuickItem *>(obj)) {
@@ -343,6 +385,8 @@ QSizeF Element::localSize(const QObject *obj)
 #ifdef QT_WIDGETS_LIB
     if (auto w = qobject_cast<const QWidget *>(obj))
         return QSizeF(w->size());
+    if (auto item = viewItem(obj))
+        return QSizeF(item->viewportRect().size());
 #endif
 #ifdef QT_QUICK_LIB
     if (auto item = qobject_cast<const QQuickItem *>(obj))
@@ -375,10 +419,27 @@ QPointF Element::defaultClickPosition(const QObject *obj)
     return QPointF(size.width() / 2.0, size.height() / 2.0);
 }
 
+QPointF Element::checkPosition(const QObject *obj)
+{
+#ifdef QT_WIDGETS_LIB
+    if (auto item = viewItem(obj))
+        return item->checkIndicatorPosition();
+#endif
+    return defaultClickPosition(obj);
+}
+
 Element::InputTarget Element::inputTarget(QObject *obj, QPointF localPos, QString *error)
 {
     InputTarget t;
 #ifdef QT_WIDGETS_LIB
+    if (auto item = viewItem(obj)) {
+        QWidget *viewport = viewportOf(item);
+        if (!viewport || !item->isValid()) {
+            *error = QStringLiteral("the item no longer exists");
+            return t;
+        }
+        return inputTarget(viewport, localPos + QPointF(item->viewportRect().topLeft()), error);
+    }
     if (auto w = qobject_cast<QWidget *>(obj)) {
         QWidget *top = w->window();
         t.window = top->windowHandle();
@@ -436,6 +497,13 @@ QString Element::blockedBy(QObject *obj, QPointF localPos, const QVector<QObject
     }
 
 #ifdef QT_WIDGETS_LIB
+    if (auto item = viewItem(obj)) {
+        QWidget *viewport = viewportOf(item);
+        const QPointF viewportPos = localPos + QPointF(item->viewportRect().topLeft());
+        if (!viewport->rect().contains(viewportPos.toPoint()))
+            return QStringLiteral("%1 (the point is outside its visible area)").arg(describe(item->view()));
+        return blockedBy(viewport, viewportPos, allObjects);
+    }
     if (auto w = qobject_cast<QWidget *>(obj)) {
         QWidget *top = w->window();
         QWidget *hit = top->childAt(t.windowPos.toPoint());
@@ -475,6 +543,14 @@ bool Element::scrollIntoView(QObject *obj)
 {
     bool scrolled = false;
 #ifdef QT_WIDGETS_LIB
+    if (auto item = viewItem(obj)) {
+        if (!item->isValid())
+            return false;
+        scrolled = scrollIntoView(item->view());
+        const QRect before = item->viewportRect();
+        item->view()->scrollTo(item->kind() == ViewItem::TableRow ? item->index().siblingAtColumn(0) : item->index());
+        return scrolled || item->viewportRect() != before;
+    }
     if (auto w = qobject_cast<QWidget *>(obj)) {
         for (QWidget *p = w->parentWidget(); p; p = p->parentWidget()) {
             if (auto area = qobject_cast<QScrollArea *>(p)) {
@@ -526,6 +602,12 @@ bool Element::scrollIntoView(QObject *obj)
 bool Element::focus(QObject *obj, QString *error)
 {
 #ifdef QT_WIDGETS_LIB
+    if (auto item = viewItem(obj)) {
+        if (!item->isValid() || !focus(item->view(), error))
+            return false;
+        item->view()->selectionModel()->setCurrentIndex(item->index(), QItemSelectionModel::NoUpdate);
+        return true;
+    }
     if (auto w = qobject_cast<QWidget *>(obj)) {
         w->window()->activateWindow();
         QWindowSystemInterface::flushWindowSystemEvents();
@@ -555,6 +637,16 @@ bool Element::focus(QObject *obj, QString *error)
 QImage Element::grab(QObject *obj, bool wholeWindow, QString *error)
 {
 #ifdef QT_WIDGETS_LIB
+    if (auto item = viewItem(obj)) {
+        QWidget *viewport = viewportOf(item);
+        if (!viewport) {
+            *error = QStringLiteral("the item no longer exists");
+            return QImage();
+        }
+        if (wholeWindow)
+            return viewport->window()->grab().toImage();
+        return viewport->grab(item->viewportRect().intersected(viewport->rect())).toImage();
+    }
     if (auto w = qobject_cast<QWidget *>(obj))
         return (wholeWindow ? w->window() : w)->grab().toImage();
 #endif
@@ -746,8 +838,32 @@ void Element::ensureAccessibilityActive()
 
 Element::AccessibleInfo Element::accessible(QObject *obj)
 {
-    ensureAccessibilityActive();
     AccessibleInfo info;
+#ifdef QT_WIDGETS_LIB
+    if (auto item = viewItem(obj)) {
+        if (!item->isValid())
+            return info;
+        info.valid = true;
+        info.role = item->role();
+        info.qtRole = item->role();
+        info.name = item->text();
+        info.description = item->toolTip();
+        info.checkable = item->isCheckable();
+        info.checked = item->isChecked();
+        info.disabled = !item->isEnabled();
+        info.selected = item->isSelected();
+        info.focused = item->isCurrent() && item->view()->hasFocus();
+        info.readOnly = !item->isEditable();
+        info.invisible = !item->isShown();
+        if (item->kind() == ViewItem::TreeItem) {
+            info.level = item->level();
+            info.expanded = item->isExpanded();
+            info.expandable = item->view()->model()->hasChildren(item->index());
+        }
+        return info;
+    }
+#endif
+    ensureAccessibilityActive();
     QAccessibleInterface *iface = QAccessible::queryAccessibleInterface(obj);
     if (!iface || !iface->isValid())
         return info;
@@ -821,6 +937,10 @@ Element::AccessibleInfo Element::accessible(QObject *obj)
 
 QVector<QObject *> Element::accessibleChildren(QObject *obj)
 {
+#ifdef QT_WIDGETS_LIB
+    if (viewItem(obj))
+        return ViewItems::children(obj);
+#endif
     ensureAccessibilityActive();
     QVector<QObject *> result;
     QAccessibleInterface *iface = QAccessible::queryAccessibleInterface(obj);
@@ -831,6 +951,11 @@ QVector<QObject *> Element::accessibleChildren(QObject *obj)
         if (child && child->isValid() && child->object())
             result.push_back(child->object());
     }
+#ifdef QT_WIDGETS_LIB
+    // the rows of item views are accessible children without QObjects: use their stand-ins
+    if (qobject_cast<QAbstractItemView *>(obj))
+        result += ViewItems::children(obj);
+#endif
     return result;
 }
 
@@ -857,6 +982,10 @@ qreal Element::viewportRatio(QObject *obj)
         return 0;
     QRectF visible = rect;
 #ifdef QT_WIDGETS_LIB
+    if (auto item = viewItem(obj)) {
+        for (QWidget *p = viewportOf(item); p; p = p->parentWidget())
+            visible &= globalGeometry(p);
+    }
     if (auto w = qobject_cast<QWidget *>(obj)) {
         for (QWidget *p = w->parentWidget(); p; p = p->parentWidget())
             visible &= globalGeometry(p);

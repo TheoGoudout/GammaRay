@@ -360,15 +360,46 @@ export class LocatorAssertions extends BaseAssertions<Locator> {
     return (await this.subject.app.connection.call<{ value: string }>('text', { handle })).value;
   }
 
-  /** Text equals @p expected (whitespace-normalized) or matches the RegExp. */
-  async toHaveText(expected: string | RegExp, options: TimeoutOptions = {}): Promise<void> {
+  /** Texts of all matching elements, in order. */
+  private async texts(): Promise<string[]> {
+    const elements = await this.subject.elements();
+    const result: string[] = [];
+    for (const e of elements) result.push(await this.text(e.handle).catch(() => ''));
+    return result;
+  }
+
+  /**
+   * Text equals @p expected (whitespace-normalized) or matches the RegExp. With an array, the
+   * locator must match exactly that many elements, with these texts in order.
+   */
+  async toHaveText(expected: string | RegExp | (string | RegExp)[], options: TimeoutOptions = {}): Promise<void> {
+    if (Array.isArray(expected)) {
+      await this.retry('toHaveText', expected, options, async () => {
+        const v = await this.texts();
+        return { pass: v.length === expected.length && expected.every((e, i) => matchesText(v[i], e, false)), actual: v };
+      });
+      return;
+    }
     await this.retry('toHaveText', expected, options, async () => {
       const v = await orNotFound(this.subject, (h) => this.text(h));
       return { pass: matchesText(v, expected, false), actual: v };
     });
   }
 
-  async toContainText(expected: string | RegExp, options: TimeoutOptions = {}): Promise<void> {
+  /**
+   * Text contains @p expected. With an array, the matching elements must contain these texts
+   * in order (each expected text in a later element than the previous one).
+   */
+  async toContainText(expected: string | RegExp | (string | RegExp)[], options: TimeoutOptions = {}): Promise<void> {
+    if (Array.isArray(expected)) {
+      await this.retry('toContainText', expected, options, async () => {
+        const v = await this.texts();
+        let i = 0;
+        for (const text of v) if (i < expected.length && matchesText(text, expected[i], true)) ++i;
+        return { pass: i === expected.length, actual: v };
+      });
+      return;
+    }
     await this.retry('toContainText', expected, options, async () => {
       const v = await orNotFound(this.subject, (h) => this.text(h));
       return { pass: matchesText(v, expected, true), actual: v };
@@ -378,6 +409,37 @@ export class LocatorAssertions extends BaseAssertions<Locator> {
   /** Current text of an editable element. */
   async toHaveValue(expected: string | RegExp, options: TimeoutOptions = {}): Promise<void> {
     await this.toHaveText(expected, options);
+  }
+
+  /**
+   * The selected rows of an item view (or a combo box's current text) equal @p values, in order
+   * (Qt adaptation of toHaveValues() for <select multiple>).
+   */
+  async toHaveValues(values: (string | RegExp)[], options: TimeoutOptions = {}): Promise<void> {
+    await this.retry('toHaveValues', values, options, async () => {
+      const v = await orNotFound(this.subject, async (h) =>
+        (await this.subject.app.connection.call<{ values: string[] }>('selectedValues', { handle: h })).values,
+      );
+      if (v === NOT_FOUND) return { pass: false, actual: v };
+      const pass = v.length === values.length && values.every((e, i) => (e instanceof RegExp ? e.test(v[i]) : e === v[i]));
+      return { pass, actual: v };
+    });
+  }
+
+  /**
+   * Computed CSS-like property @p name (see Locator.computedStyle()) equals @p value or matches
+   * the RegExp. Colors compare in the browser's "rgb(r, g, b)" form; "#rrggbb" and basic color
+   * names are converted.
+   */
+  async toHaveCSS(name: string, value: string | RegExp, options: TimeoutOptions = {}): Promise<void> {
+    const expected = typeof value === 'string' ? normalizeCssValue(value) : value;
+    await this.retry(`toHaveCSS(${JSON.stringify(name)})`, expected, options, async () => {
+      const v = await orNotFound(this.subject, async (h) =>
+        (await this.subject.app.connection.call<{ style: Record<string, string> }>('computedStyle', { handle: h })).style[name],
+      );
+      if (v === NOT_FOUND || v === undefined) return { pass: false, actual: v === NOT_FOUND ? v : `<no ${name}>` };
+      return { pass: expected instanceof RegExp ? expected.test(v) : v === expected, actual: v };
+    });
   }
 
   /** Property @p name deep-equals @p value (or matches it, for a RegExp). */
@@ -482,4 +544,35 @@ export class AppAssertions extends BaseAssertions<QtApp> {
       return Buffer.from(r.image, 'base64');
     }, name, options);
   }
+}
+
+const namedColors: Record<string, string> = {
+  black: '#000000', silver: '#c0c0c0', gray: '#808080', grey: '#808080', white: '#ffffff', maroon: '#800000',
+  red: '#ff0000', purple: '#800080', fuchsia: '#ff00ff', magenta: '#ff00ff', green: '#008000', lime: '#00ff00',
+  olive: '#808000', yellow: '#ffff00', navy: '#000080', blue: '#0000ff', teal: '#008080', aqua: '#00ffff',
+  cyan: '#00ffff', orange: '#ffa500', lightgray: '#d3d3d3', lightgrey: '#d3d3d3', darkgray: '#a9a9a9',
+  lightgreen: '#90ee90', lightsteelblue: '#b0c4de', lightblue: '#add8e6', pink: '#ffc0cb', brown: '#a52a2a',
+};
+
+/** Normalizes CSS colors to the computed "rgb(r, g, b)" / "rgba(r, g, b, a)" form; other values pass through. */
+export function normalizeCssValue(value: string): string {
+  const v = value.trim();
+  if (v.toLowerCase() === 'transparent') return 'rgba(0, 0, 0, 0)';
+  const hex = (namedColors[v.toLowerCase()] ?? v).match(/^#([0-9a-f]{3,8})$/i)?.[1];
+  if (hex && [3, 4, 6, 8].includes(hex.length)) {
+    const full = hex.length <= 4 ? [...hex].map((c) => c + c).join('') : hex;
+    const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+    if (full.length === 8) {
+      const a = parseInt(full.slice(6, 8), 16) / 255;
+      return a === 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${Number(a.toPrecision(3))})`;
+    }
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+  const fn = v.match(/^(rgba?)\(\s*([^)]*)\)$/i);
+  if (fn) {
+    const parts = fn[2].split(/[\s,/]+/).filter(Boolean);
+    if (parts.length === 4 && Number(parts[3]) === 1) parts.pop();
+    return `${parts.length === 4 ? 'rgba' : 'rgb'}(${parts.join(', ')})`;
+  }
+  return v;
 }

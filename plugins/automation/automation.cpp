@@ -16,6 +16,7 @@
 #include "automationinput.h"
 #include "automationrecorder.h"
 #include "automationselector.h"
+#include "automationstyle.h"
 
 #include <core/probe.h>
 #include <core/probeguard.h>
@@ -46,6 +47,8 @@
 #endif
 
 #ifdef QT_WIDGETS_LIB
+#include "automationitemview.h"
+
 #include <QAbstractItemView>
 #include <QComboBox>
 #endif
@@ -351,7 +354,12 @@ QJsonObject AutomationServer::describe(QObject *obj)
 
 bool AutomationServer::accept(QObject *obj) const
 {
-    // only main-thread objects tracked by the probe (excludes GammaRay's own objects)
+    // only main-thread objects tracked by the probe (excludes GammaRay's own objects),
+    // plus the stand-ins for item view rows
+#ifdef QT_WIDGETS_LIB
+    if (qobject_cast<ViewItem *>(obj))
+        return true;
+#endif
     return obj->thread() == thread() && m_probe->isValidObject(obj);
 }
 
@@ -395,6 +403,8 @@ QPointF AutomationServer::positionParam(QObject *obj, const QJsonObject &params,
         const auto o = p.toObject();
         return QPointF(o.value(QStringLiteral("x")).toDouble(), o.value(QStringLiteral("y")).toDouble());
     }
+    if (params.value(QStringLiteral("forCheck")).toBool())
+        return Element::checkPosition(obj);
     return Element::defaultClickPosition(obj);
 }
 
@@ -1560,6 +1570,24 @@ void AutomationServer::registerExtendedHandlers()
     };
 
     // --- QComboBox option selection through its popup, with real clicks ---
+    h[QStringLiteral("computedStyle")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        if (QObject *obj = resolve(params, reply))
+            reply->ok(QJsonObject { { QStringLiteral("style"), Style::computed(obj) } });
+    };
+
+    h[QStringLiteral("selectedValues")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        QObject *obj = resolve(params, reply);
+        if (!obj)
+            return;
+        bool ok = false;
+        const QStringList values = Style::selectedValues(obj, &ok);
+        if (!ok) {
+            reply->fail(NotFound, QStringLiteral("%1 has no selection (not an item view or combo box)").arg(Element::displayTypeName(obj)));
+            return;
+        }
+        reply->ok(QJsonObject { { QStringLiteral("values"), QJsonArray::fromStringList(values) } });
+    };
+
     h[QStringLiteral("selectOption")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
         QObject *target = resolve(params, reply);
         if (!target)

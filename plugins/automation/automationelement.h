@@ -71,6 +71,8 @@ struct InputTarget
 InputTarget inputTarget(QObject *obj, QPointF localPos, QString *error);
 /*! Where a click lands by default (local coordinates): the center of the clickable area. */
 QPointF defaultClickPosition(const QObject *obj);
+/*! Where check()/uncheck() click (local coordinates): the check indicator of an item view row. */
+QPointF checkPosition(const QObject *obj);
 /*! Size of @p obj in its local coordinates. */
 QSizeF localSize(const QObject *obj);
 

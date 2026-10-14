@@ -16,7 +16,12 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Qml Quick QuickControls2)
 
 add_executable(
     sampleapp
-    main.cpp qml.qrc widgetswindow.cpp widgetswindow.h
+    datawindow.cpp
+    datawindow.h
+    main.cpp
+    qml.qrc
+    widgetswindow.cpp
+    widgetswindow.h
 )
 target_link_libraries(
     sampleapp

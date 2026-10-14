@@ -53,6 +53,7 @@ private:
     QObject *meaningfulAncestor(QObject *obj) const;
     void emitAction(const QString &action, QObject *target, const QJsonObject &extra = QJsonObject());
     void handleRelease(QObject *target, QPointF globalPos, QObject *releaseTarget);
+    static bool isCheckedRow(QObject *obj);
 
     LocatorFactory m_locator;
     ActionSink m_sink;
@@ -63,6 +64,8 @@ private:
     QPointer<QObject> m_pressTarget;
     QPointF m_pressGlobalPos;
     QPointF m_pressLocalPos;
+    Qt::KeyboardModifiers m_pressModifiers;
+    bool m_pressChecked = false;
     bool m_comboPopup = false;
     QPointer<QObject> m_typingTarget;
 };

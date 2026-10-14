@@ -19,6 +19,8 @@ export interface RecordedAction {
   dx?: number;
   dy?: number;
   sourcePosition?: { x: number; y: number };
+  modifiers?: string[];
+  position?: { x: number; y: number };
 }
 
 const str = (s: string) => `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n')}'`;
@@ -38,6 +40,13 @@ export function renderAction(a: RecordedAction): string {
       return `await ${t}.dragTo(${a.to!.code}${pos ? `, ${pos}` : ''});`;
     case 'dragBy':
       return `await ${t}.dragBy(${a.dx}, ${a.dy}${pos ? `, ${pos}` : ''});`;
+    case 'click': {
+      const options = [
+        ...(a.modifiers?.length ? [`modifiers: [${a.modifiers.map(str).join(', ')}]`] : []),
+        ...(a.position ? [`position: { x: ${a.position.x}, y: ${a.position.y} }`] : []),
+      ];
+      return `await ${t}.click(${options.length ? `{ ${options.join(', ')} }` : ''});`;
+    }
     default:
       return `await ${t}.${a.action}();`;
   }

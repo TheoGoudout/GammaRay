@@ -14,6 +14,7 @@
 #include "automationelement.h"
 
 #include <QCoreApplication>
+#include <QJsonArray>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QMouseEvent>
@@ -21,6 +22,8 @@
 #include <QWindow>
 
 #ifdef QT_WIDGETS_LIB
+#include "automationitemview.h"
+
 #include <QComboBox>
 #include <QWidget>
 #endif
@@ -180,10 +183,26 @@ QObject *ActionRecorder::pointerTarget(QObject *receiver, QPointF windowPos) con
     Q_UNUSED(windowPos);
 #endif
 #ifdef QT_WIDGETS_LIB
-    if (receiver->isWidgetType())
+    if (receiver->isWidgetType()) {
+        // item view rows have no widgets: use the row (or table cell) under the pointer
+        if (QAbstractItemView *view = ViewItems::viewForViewport(static_cast<QWidget *>(receiver))) {
+            if (ViewItem *item = ViewItems::itemAt(view, windowPos.toPoint()))
+                return item;
+        }
         return meaningfulAncestor(receiver);
+    }
 #endif
     return nullptr;
+}
+
+bool ActionRecorder::isCheckedRow(QObject *obj)
+{
+#ifdef QT_WIDGETS_LIB
+    if (auto item = qobject_cast<ViewItem *>(obj))
+        return item->isChecked();
+#endif
+    Q_UNUSED(obj);
+    return false;
 }
 
 void ActionRecorder::emitAction(const QString &action, QObject *target, const QJsonObject &extra)
@@ -231,6 +250,8 @@ void ActionRecorder::handleRelease(QObject *target, QPointF globalPos, QObject *
     // QComboBox popup: report the resulting selection instead of a click into the list
     if (m_comboPopup) {
         QObject *c = target;
+        if (auto row = qobject_cast<ViewItem *>(target))
+            c = row->view(); // the popup list's rows belong to the combo box's view
         while (c && !qobject_cast<QComboBox *>(c))
             c = c->parent();
         const QPointer<QComboBox> combo(qobject_cast<QComboBox *>(c));
@@ -260,6 +281,36 @@ void ActionRecorder::handleRelease(QObject *target, QPointF globalPos, QObject *
             }
             break;
         }
+    }
+#endif
+
+#ifdef QT_WIDGETS_LIB
+    // a click on the check box of an item view row: check()/uncheck(), else a (modified) click
+    if (auto item = qobject_cast<ViewItem *>(target)) {
+        const QPointer<ViewItem> row(item);
+        const bool wasChecked = m_pressChecked;
+        // a click left of the row (on a tree's expand/collapse arrow) needs its position
+        QJsonObject extra;
+        if (m_pressLocalPos.x() < 0)
+            extra.insert(QStringLiteral("position"), QJsonObject { { QStringLiteral("x"), qRound(m_pressLocalPos.x()) }, { QStringLiteral("y"), qRound(m_pressLocalPos.y()) } });
+        QStringList modifiers;
+        if (m_pressModifiers & Qt::ControlModifier)
+            modifiers.push_back(QStringLiteral("Control"));
+        if (m_pressModifiers & Qt::ShiftModifier)
+            modifiers.push_back(QStringLiteral("Shift"));
+        if (m_pressModifiers & Qt::AltModifier)
+            modifiers.push_back(QStringLiteral("Alt"));
+        if (!modifiers.isEmpty())
+            extra.insert(QStringLiteral("modifiers"), QJsonArray::fromStringList(modifiers));
+        QTimer::singleShot(0, this, [this, row, wasChecked, extra]() {
+            if (!row)
+                return;
+            if (row->isCheckable() && row->isChecked() != wasChecked)
+                emitAction(row->isChecked() ? QStringLiteral("check") : QStringLiteral("uncheck"), row);
+            else
+                emitAction(QStringLiteral("click"), row, extra);
+        });
+        return;
     }
 #endif
 
@@ -320,6 +371,8 @@ bool ActionRecorder::eventFilter(QObject *receiver, QEvent *event)
             m_pressTarget = target;
             m_pressGlobalPos = global;
             m_pressLocalPos = global - Element::globalGeometry(target).topLeft();
+            m_pressModifiers = me->modifiers();
+            m_pressChecked = isCheckedRow(target);
 #ifdef QT_WIDGETS_LIB
             // clicks into a QComboBox's popup list are recorded as selectOption on release
             auto w = qobject_cast<QWidget *>(receiver);
