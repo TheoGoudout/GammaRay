@@ -69,6 +69,7 @@ void ObjectTreeModel::objectAdded(QObject *obj)
         IF_DEBUG(cout << "tree double obj added: " << hex << obj << endl;)
         return;
     }
+    m_displayCache.remove(obj); // a new object at the address of a deleted one
 
     // this is ugly, but apparently it can happen
     // that an object gets created without parent
@@ -114,19 +115,24 @@ void ObjectTreeModel::objectRemoved(QObject *obj)
     auto parentIt = m_childParentMap.constFind(obj);
     if (parentIt == m_childParentMap.cend()) {
         Q_ASSERT(!m_parentChildMap.contains(obj));
+        m_displayCache.remove(obj);
         return;
     }
 
     QObject *parentObj = parentIt.value();
     const QModelIndex parentIndex = indexForObject(parentObj);
-    if (parentObj && !parentIndex.isValid())
+    if (parentObj && !parentIndex.isValid()) {
+        m_displayCache.remove(obj);
         return;
+    }
 
     QVector<QObject *> &siblings = m_parentChildMap[parentObj];
 
     auto it = std::lower_bound(siblings.begin(), siblings.end(), obj);
-    if (it == siblings.end() || *it != obj)
+    if (it == siblings.end() || *it != obj) {
+        m_displayCache.remove(obj);
         return;
+    }
     const int row = std::distance(siblings.begin(), it);
 
     beginRemoveRows(parentIndex, row, row);
@@ -137,6 +143,7 @@ void ObjectTreeModel::objectRemoved(QObject *obj)
     m_favorites.remove(obj);
 
     endRemoveRows();
+    m_displayCache.remove(obj);
 }
 
 void ObjectTreeModel::objectReparented(QObject *obj)
@@ -220,9 +227,20 @@ QVariant ObjectTreeModel::data(const QModelIndex &index, int role) const
         if (role == ObjectModel::IsFavoriteRole) {
             return m_favorites.contains(obj);
         }
-        return dataForObject(obj, index, role);
+        const auto value = dataForObject(obj, index, role);
+        if (role == Qt::DisplayRole && index.column() <= 1) {
+            auto &cached = m_displayCache[obj];
+            (index.column() == 0 ? cached.first : cached.second) = value.toString();
+        }
+        return value;
     }
     if (role == Qt::DisplayRole) {
+        const auto cached = m_displayCache.constFind(obj);
+        if (cached != m_displayCache.cend()) {
+            const QString &text = index.column() == 0 ? cached->first : cached->second;
+            if (!text.isNull())
+                return text;
+        }
         if (index.column() == 0)
             return Util::addressToString(obj);
         return tr("<deleted>");

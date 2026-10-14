@@ -49,6 +49,11 @@ private:
     QHash<QObject *, QObject *> m_childParentMap;
     QHash<QObject *, QVector<QObject *>> m_parentChildMap;
     QSet<QObject *> m_favorites;
+    // last display texts (columns 0 and 1) reported for each object; an object deleted in
+    // another thread stays in the model until objectRemoved() runs in the main thread, and
+    // returning different texts for it in the meantime would change what a (recursive)
+    // filter proxy accepts without a dataChanged() signal, corrupting the proxy's mapping
+    mutable QHash<QObject *, QPair<QString, QString>> m_displayCache;
 };
 }
 
