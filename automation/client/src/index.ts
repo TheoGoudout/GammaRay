@@ -19,7 +19,7 @@ export {
 } from './expect';
 export { Keyboard, Mouse, Touchscreen } from './input';
 export { addStepListener, removeStepListener, setStepRunner, type StepListener } from './instrumentation';
-export { attach, DEFAULT_DISABLED_PLUGINS, launch, type AttachOptions, type LaunchOptions } from './launcher';
+export { attach, connect, DEFAULT_DISABLED_PLUGINS, launch, type AttachOptions, type LaunchOptions } from './launcher';
 export { Locator, type FilterOptions } from './locator';
 export { quote, roleSelector, textSelector, type AriaRole, type ByRoleOptions } from './selectors';
 export { Inspector, type InspectorOptions } from './inspector';
@@ -27,3 +27,4 @@ export { Tracing, type TracingStartOptions, type TracingStopOptions } from './tr
 export { SignalSpy } from './signalspy';
 export { Video, type RecordVideoOptions, type VideoOptions } from './video';
 export * from './types';
+export { runServer, type RunningServer, type ServerOptions } from './remote';

@@ -38,7 +38,7 @@ Legend: ✅ same name and semantics · ≈ same idea, adapted to Qt · ❌ missi
 |---|---|---|
 | `launch()` + `newPage()` | `launch(executable, args, options)` returns a `QtApp` | ≈ |
 | `headless`, `slowMo`, `env`, `timeout` | same names | ✅ |
-| `connect()` / `connectOverCDP()` | `attach('host:port')`; ➕ `attach(pid)` injects into a running process | ≈ |
+| `connect()` / `connectOverCDP()`, `launchServer()` / remote browsers | `connect('host:port')`; `qt-playwright server` + `launch(app, args, { remote })` for a fresh application per test on another machine; ➕ `attach(pid)` injects into a running process | ≈ |
 | browser → context → page | one `QtApp` per process; windows are found with locators (`app.windows()`) | ≈ |
 | `recordVideo`, `page.video().path/saveAs/delete` | same; mp4 by default; ➕ `app.startVideo()`/`stop()`, gif, drawn pointer | ✅ |
 | `selectors.setTestIdAttribute()` | `app.setTestIdAttribute(property)` (default `objectName`) | ≈ |

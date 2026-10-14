@@ -28,15 +28,21 @@ import {
   SignalSpyAssertions,
 } from './expect';
 import { setStepRunner } from './instrumentation';
-import { launch, type LaunchOptions } from './launcher';
+import { connect, launch, type LaunchOptions } from './launcher';
 import type { Locator } from './locator';
 import type { SignalSpy } from './signalspy';
 import type { VideoOptions } from './video';
 
 export interface QtAppOptions extends LaunchOptions {
-  /** The application to launch. */
-  executable: string;
+  /** The application to launch (on the remote machine with `remote`). */
+  executable?: string;
   args?: string[];
+  /**
+   * Instead of launching: connect to an application that is already running with the
+   * automation server enabled, e.g. "device:9910" on a device without Node.js. It is shared
+   * by the tests (not restarted) and keeps running afterwards.
+   */
+  connect?: string;
 }
 
 export type ScreenshotMode = 'off' | 'on' | 'only-on-failure';
@@ -73,8 +79,9 @@ export const test = base.extend<QtFixtures & QtOptions>({
   qtTrace: [undefined, { option: true }],
 
   app: async ({ qtApp, qtScreenshot, qtVideo, video, qtTrace, trace }, use, testInfo) => {
-    if (!qtApp?.executable) throw new Error('qt-playwright: set `use: { qtApp: { executable: ... } }` in playwright.config');
-    const { executable, args, ...launchOptions } = qtApp;
+    if (!qtApp?.executable && !qtApp?.connect)
+      throw new Error('qt-playwright: set `use: { qtApp: { executable: ... } }` (or `connect`) in playwright.config');
+    const { executable, args, connect: connectTo, ...launchOptions } = qtApp;
     const actionTimeout = testInfo.project.use.actionTimeout;
 
     const videoSetting = qtVideo ?? video;
@@ -85,11 +92,12 @@ export const test = base.extend<QtFixtures & QtOptions>({
 
     // QTPW_DEBUG=1: stepping in the inspector, like PWDEBUG=1 (no test timeout)
     if (process.env.QTPW_DEBUG) testInfo.setTimeout(0);
-    const app = await launch(executable, args ?? [], {
+    const appOptions = {
       defaultTimeout: actionTimeout || undefined,
       ...launchOptions,
       recordVideo: recordVideo ? { ...videoOptions, dir: testInfo.outputPath('videos') } : launchOptions.recordVideo,
-    });
+    };
+    const app = connectTo ? await connect(connectTo, appOptions) : await launch(executable!, args ?? [], appOptions);
     const traceSetting = (qtTrace ?? trace) as QtOptions['qtTrace'];
     // Playwright's trace option may carry runner-only fields (UI mode: { live, sources })
     type TraceObject = { mode: TraceMode; format?: 'zip' | 'html'; live?: boolean; sources?: boolean } & TracingStartOptions;

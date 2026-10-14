@@ -190,7 +190,8 @@ more specific selector, scope with `>>`, or use `.first()`, `.last()` or `.nth(i
 | | |
 |-|-|
 | `launch(app, args?, options?)` | start under `gammaray --inject-only` with the automation server enabled; options: `env`, `cwd`, `headless`, `gammaray`, `timeout`, `probeAbi`, `injector`, `automationPort`, `disabledPlugins`, `printOutput`, `defaultTimeout`, `slowMo`, `recordVideo` |
-| `attach("host:port" \| "ws://...")` | connect to a running automation server, e.g. on a remote/embedded device |
+| `attach("host:port" \| "ws://...")`, `connect(...)` | connect to a running automation server, e.g. on a remote/embedded device (`connect` also applies launch options like `slowMo` and `recordVideo`) |
+| `launch(app, args, { remote })`, `runServer()` | launch on another machine through `qt-playwright server` (see below) |
 | `attach(pid)` | inject the probe into a running process (gdb/lldb) and enable automation in it |
 | `app.close()` | disconnect; for launched apps also terminate them |
 | `app.locator(sel)`, `app.getByRole/Label/Placeholder/Title/TestId/Text(...)`, `app.getById(id)` | locators |
@@ -204,9 +205,52 @@ more specific selector, scope with `>>`, or use `.first()`, `.last()` or `.nth(i
 | `app.pause()`, `app.inspector()`, `app.hideHighlight()` | debugging: the inspector, highlights |
 | `app.setDefaultTimeout(ms)`, `app.expectTimeout`, `app.slowMo`, `app.setTestIdAttribute(prop)`, `app.pid`, `app.info`, `app.output()` | misc |
 
-Remote or embedded targets: start the app on the device with
-`GAMMARAY_AUTOMATION_PORT=<port> GAMMARAY_AUTOMATION_ADDRESS=0.0.0.0 gammaray --inject-only ./app`
-(or set the variables and preload the probe yourself), then `attach("device:<port>")`.
+### Remote machines and devices
+
+Tests can run on one machine and the application on another (a device, a VM, a
+lab machine). Run `qt-playwright server` where the application runs. It starts a fresh
+application for every test and relays the automation connection, so the probe itself
+keeps listening on 127.0.0.1 only:
+
+```sh
+# on the device (needs Node.js, GammaRay and the application)
+QTPW_SERVER_TOKEN=s3cret npx qt-playwright server --port 9900 --app /opt/myapp/bin/myapp
+# on your machine
+ssh -L 9900:127.0.0.1:9900 user@device
+```
+
+```ts
+// playwright.config.ts
+use: {
+  qtApp: {
+    executable: '/opt/myapp/bin/myapp',
+    remote: { url: 'localhost:9900', token: process.env.QTPW_SERVER_TOKEN },
+  },
+}
+// or directly: await launch('/opt/myapp/bin/myapp', [], { remote: 'localhost:9900' })
+```
+
+Everything works as with a local application: actions, assertions, screenshots, video,
+traces (also live in UI mode) and the inspector. The executable path, `env` and `cwd`
+refer to the remote machine. Closing the app (the end of each test) terminates the remote
+application. The server listens on 127.0.0.1 by default (`--host` changes it), requires
+the token (`--token` or `$QTPW_SERVER_TOKEN`, else a random one is printed), and with
+`--app` only launches the listed executables. Anyone with the token can start those
+applications, so keep the server behind an SSH tunnel or a trusted network.
+
+Devices without Node.js: start the application yourself with the automation server
+listening on the network, and connect to it. It is shared by all tests and not restarted:
+
+```sh
+GAMMARAY_AUTOMATION_PORT=9910 GAMMARAY_AUTOMATION_ADDRESS=0.0.0.0 gammaray --inject-only ./app
+```
+
+```ts
+use: { qtApp: { connect: 'device:9910' } }        // or: await connect('device:9910')
+```
+
+The automation port has no authentication, so only expose it on a trusted network or
+through a tunnel. `attach(pid)` injects into a process on the local machine only.
 
 ### Locators
 

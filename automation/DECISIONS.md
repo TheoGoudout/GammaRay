@@ -306,3 +306,19 @@ option preferred. Newest entries go at the bottom.
   (`performance.now()`), so the viewer merges each of our actions with the runner's
   step instead of listing it twice. The directory layout is Playwright-internal; if it
   changes, live updates degrade to showing the trace when the test ends.
+
+## D28. Remote applications
+
+- Options for tests on one machine and the application on another: (a) expose the
+  automation port on the network and connect; (b) a small server on the remote machine
+  that launches applications and relays the connection.
+- **Both, (b) by default.** The automation server has no authentication and the
+  application should be fresh for every test, which (a) can't provide. `qt-playwright
+  server` reuses the local launch code, starts one application per WebSocket, and after a
+  `launched` message relays text and binary messages unchanged, so everything (video,
+  traces, inspector) works over it. The probe stays on 127.0.0.1. The server checks a
+  bearer token (constant-time), can restrict executables (`--app`), and listens on
+  127.0.0.1 unless told otherwise. Closing the socket terminates the application.
+  Application output arrives as `qtpw.output` notifications, so `app.output()` works.
+- (a) remains as `connect()` / `qtApp.connect` for devices without Node.js, where the
+  application is started separately and shared by the tests.

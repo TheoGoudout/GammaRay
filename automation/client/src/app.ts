@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Klarälvdalens Datakonsult AB, a KDAB Group company <info@kdab.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { ChildProcess } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { renderAriaSnapshot, type AriaNode } from './aria';
 import { CodeRecorder, type RecordedAction } from './codegen';
@@ -42,11 +41,13 @@ export interface AppInfo {
   platform: string;
 }
 
+/** An application started by qt-playwright (locally, or by a remote qt-playwright server). */
 export interface OwnedProcess {
-  /** The GammaRay launcher process (parent of the application). */
-  launcher: ChildProcess;
   /** Combined stdout/stderr of launcher and application so far. */
   output: () => string;
+  isRunning(): boolean;
+  /** Ends the application; called after the connection was closed. */
+  terminate(pid: number): Promise<void>;
 }
 
 /** A connected Qt application. */
@@ -416,8 +417,7 @@ export class QtApp {
   /** Whether the application process is still running (launched apps only). */
   isRunning(): boolean {
     if (!this.owned) return !this.connection.isClosed;
-    const l = this.owned.launcher;
-    return l.exitCode === null && l.signalCode === null;
+    return this.owned.isRunning();
   }
 
   /**
@@ -432,27 +432,8 @@ export class QtApp {
     const results = await Promise.allSettled([...this.videos].map((v) => v.stop()));
     this.connection.close();
     if (!this.owned) return;
-    const launcher = this.owned.launcher;
-    const exited = new Promise<void>((resolve) => {
-      if (launcher.exitCode !== null || launcher.signalCode !== null) resolve();
-      else launcher.once('exit', () => resolve());
-    });
-    // terminating the application ends the launcher as well
-    trySignal(this.info.pid, 'SIGTERM');
-    if (!(await Promise.race([exited.then(() => true), sleep(3_000).then(() => false)]))) {
-      trySignal(this.info.pid, 'SIGKILL');
-      launcher.kill('SIGKILL');
-      await exited;
-    }
+    await this.owned.terminate(this.info.pid);
     const failed = results.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
     if (failed) throw failed.reason;
-  }
-}
-
-function trySignal(pid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(pid, signal);
-  } catch {
-    // already gone
   }
 }

@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Klarälvdalens Datakonsult AB, a KDAB Group company <info@kdab.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Video, type RecordVideoOptions } from './video';
-import { AppInfo, QtApp } from './app';
+import { AppInfo, QtApp, type OwnedProcess } from './app';
 import { Connection } from './connection';
 import { TimeoutError } from './errors';
-import { poll } from './wait';
+import { launchRemote } from './remote';
+import { poll, sleep } from './wait';
 
 /** GammaRay tool plugins disabled by default: not needed for automation, and some change app behavior. */
 export const DEFAULT_DISABLED_PLUGINS = [
@@ -74,6 +75,12 @@ export interface LaunchOptions extends CommonOptions {
   slowMo?: number;
   /** Record a video of the session into `dir` (see QtApp.video()), like Playwright's recordVideo. */
   recordVideo?: RecordVideoOptions;
+  /**
+   * Start the application on another machine, through a `qt-playwright server` running
+   * there: "ws://host:port" (or "host:port"), optionally with the server's token
+   * (default: $QTPW_SERVER_TOKEN). The executable path and `env`/`cwd` refer to that machine.
+   */
+  remote?: string | { url: string; token?: string };
 }
 
 export interface AttachOptions extends CommonOptions {
@@ -110,6 +117,45 @@ async function handshake(url: string, timeout: number) {
  *   await app.close();
  */
 export async function launch(appPath: string, args: string[] = [], options: LaunchOptions = {}): Promise<QtApp> {
+  if (options.remote) return launchRemote(appPath, args, options);
+  const timeout = options.timeout ?? 30_000;
+  const started = await startProcess(appPath, args, options);
+  try {
+    const { connection, info } = await handshake(started.url, timeout);
+    return await setUpApp(connection, info, localProcess(started.launcher, started.output), options);
+  } catch (e) {
+    started.launcher.kill('SIGKILL');
+    throw e;
+  }
+}
+
+/**
+ * Connects to an application that already runs on its own (e.g. on a device without
+ * Node.js, started with GAMMARAY_AUTOMATION_PORT/GAMMARAY_AUTOMATION_ADDRESS) and sets it
+ * up like launch() does (timeouts, slowMo, recordVideo). close() only disconnects.
+ */
+export async function connect(target: string, options: LaunchOptions = {}): Promise<QtApp> {
+  const url = /^wss?:\/\//.test(target) ? target : `ws://${target}`;
+  const { connection, info } = await handshake(url, options.timeout ?? 30_000);
+  return setUpApp(connection, info, undefined, options);
+}
+
+/** A started (local) application: the launcher process and the automation server's URL. */
+export interface StartedProcess {
+  url: string;
+  launcher: ChildProcess;
+  output: () => string;
+}
+
+/**
+ * Starts @p appPath under GammaRay with the automation server enabled and waits until the
+ * server listens (used by launch() and by `qt-playwright server`).
+ */
+export async function startProcess(
+  appPath: string,
+  args: string[],
+  options: LaunchOptions & { onOutput?: (text: string) => void },
+): Promise<StartedProcess> {
   const timeout = options.timeout ?? 30_000;
   const headless = options.headless ?? !(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
   const env: Record<string, string> = {};
@@ -137,6 +183,7 @@ export async function launch(appPath: string, args: string[] = [], options: Laun
   const onData = (chunk: Buffer, stream: NodeJS.WriteStream) => {
     const text = chunk.toString();
     if (printOutput) stream.write(text);
+    options.onOutput?.(text);
     output = (output + text).slice(-MAX_OUTPUT);
     partial += text;
     const lines = partial.split('\n');
@@ -170,29 +217,54 @@ export async function launch(appPath: string, args: string[] = [], options: Laun
   launcher.removeAllListeners('exit');
   launcher.removeAllListeners('error');
   launcher.on('error', () => undefined);
+  return { url, launcher, output: () => output };
+}
 
+function trySignal(pid: number, signal: NodeJS.Signals): void {
   try {
-    const { connection, info } = await handshake(url, timeout);
-    const app = new QtApp(connection, info, { launcher, output: () => output });
-    if (options.defaultTimeout) app.setDefaultTimeout(options.defaultTimeout);
-    app.slowMo = options.slowMo ?? 0;
-    app.expectTimeout = options.expectTimeout;
-    if (process.env.QTPW_DEBUG) await debugMode(app);
-    if (options.recordVideo) {
-      const { dir, format, ...videoOptions } = options.recordVideo;
-      const path = join(dir, `${randomUUID()}.${format ?? 'mp4'}`);
-      try {
-        app.setRecordedVideo(await Video.start(connection, path, videoOptions));
-      } catch (e) {
-        await app.close().catch(() => undefined);
-        throw e;
-      }
-    }
-    return app;
-  } catch (e) {
-    launcher.kill('SIGKILL');
-    throw e;
+    process.kill(pid, signal);
+  } catch {
+    // already gone
   }
+}
+
+/** The OwnedProcess of a locally launched application. */
+export function localProcess(launcher: ChildProcess, output: () => string): OwnedProcess {
+  const exited = () => launcher.exitCode !== null || launcher.signalCode !== null;
+  return {
+    output,
+    isRunning: () => !exited(),
+    async terminate(pid: number) {
+      const done = new Promise<void>((resolve) => (exited() ? resolve() : launcher.once('exit', () => resolve())));
+      // terminating the application ends the launcher as well
+      trySignal(pid, 'SIGTERM');
+      if (!(await Promise.race([done.then(() => true), sleep(3_000).then(() => false)]))) {
+        trySignal(pid, 'SIGKILL');
+        launcher.kill('SIGKILL');
+        await done;
+      }
+    },
+  };
+}
+
+/** Timeouts, debug mode and video for a freshly connected, launched application. */
+export async function setUpApp(connection: Connection, info: AppInfo, owned: OwnedProcess | undefined, options: LaunchOptions): Promise<QtApp> {
+  const app = new QtApp(connection, info, owned);
+  if (options.defaultTimeout) app.setDefaultTimeout(options.defaultTimeout);
+  app.slowMo = options.slowMo ?? 0;
+  app.expectTimeout = options.expectTimeout;
+  if (process.env.QTPW_DEBUG) await debugMode(app);
+  if (options.recordVideo) {
+    const { dir, format, ...videoOptions } = options.recordVideo;
+    const path = join(dir, `${randomUUID()}.${format ?? 'mp4'}`);
+    try {
+      app.setRecordedVideo(await Video.start(connection, path, videoOptions));
+    } catch (e) {
+      await app.close().catch(() => undefined);
+      throw e;
+    }
+  }
+  return app;
 }
 
 /**

@@ -34,6 +34,11 @@ export class Connection extends EventEmitter {
     ws.on('error', (err) => this.onClose(new ConnectionClosedError(`connection to ${url} failed: ${err.message}`)));
   }
 
+  /** Wraps an already open WebSocket (e.g. relayed by a remote qt-playwright server). */
+  static fromSocket(ws: WebSocket, url: string): Connection {
+    return new Connection(ws, url);
+  }
+
   static connect(url: string, timeoutMs = 10_000): Promise<Connection> {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url, { perMessageDeflate: false });
