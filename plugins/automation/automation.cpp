@@ -1482,6 +1482,34 @@ void AutomationServer::registerExtendedHandlers()
                                 { QStringLiteral("canvas"), rectToJson(canvas) } });
     };
 
+    // locator.highlight(): boxes drawn into the application's windows
+    h[QStringLiteral("highlight")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        QVector<QObject *> elements;
+        const auto handles = params.value(QStringLiteral("handles")).toArray();
+        for (const auto &h : handles) {
+            if (QObject *obj = m_handles.object(static_cast<qint64>(h.toDouble())))
+                elements.push_back(obj);
+        }
+        if (!m_highlighter) {
+            ProbeGuard guard;
+            m_highlighter = new Highlighter(this);
+        }
+        const QColor color(params.value(QStringLiteral("color")).toString(QStringLiteral("#6fa8dc")));
+        m_highlighter->show(elements, params.value(QStringLiteral("label")).toString(), color.isValid() ? color : QColor(0x6f, 0xa8, 0xdc));
+        reply->ok(QJsonObject { { QStringLiteral("count"), elements.size() } });
+    };
+    h[QStringLiteral("hideHighlight")] = [this](QWebSocket *, const QJsonObject &, const ReplyPtr &reply) {
+        if (m_highlighter)
+            m_highlighter->hide();
+        reply->ok();
+    };
+
+    // the locator codegen would use for an element (inspector's "pick locator")
+    h[QStringLiteral("locatorFor")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        if (QObject *obj = resolve(params, reply))
+            reply->ok(codegenLocator(obj));
+    };
+
     // the visible element tree with geometry and accessibility, for trace DOM snapshots
     h[QStringLiteral("snapshotTree")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
         int budget = params.value(QStringLiteral("maxNodes")).toInt(5000);

@@ -8,6 +8,7 @@ import { CodeRecorder, type RecordedAction } from './codegen';
 import { Connection } from './connection';
 import { Dialog, FileChooser, findDialogs, isFileDialog } from './dialogs';
 import { Keyboard, Mouse, Touchscreen } from './input';
+import { Inspector, type InspectorOptions } from './inspector';
 import { step } from './instrumentation';
 import { Locator, serializeArg } from './locator';
 import {
@@ -68,6 +69,7 @@ export class QtApp {
   private dialogWatcher: Promise<void> | undefined;
   private closed = false;
   private recordedVideo: Video | null = null;
+  private inspectorInstance: Promise<Inspector> | undefined;
   private videos = new Set<Video>();
 
   constructor(
@@ -158,20 +160,28 @@ export class QtApp {
     return CodeRecorder.start(this, onChange);
   }
 
-  /** Like page.pause(): waits until Enter is pressed in the terminal (no-op without a TTY). */
+  /**
+   * Like page.pause(): opens the inspector (a local web page: live view, pick locator,
+   * locator playground, step over, recording) and waits until Resume is clicked there or
+   * Enter is pressed in the terminal. Does nothing on CI (unless QTPW_DEBUG is set).
+   */
   async pause(): Promise<void> {
-    if (!process.stdin.isTTY) {
-      process.stderr.write('app.pause(): no terminal attached, not pausing\n');
+    if (process.env.CI && !process.env.QTPW_DEBUG) {
+      process.stderr.write('app.pause(): not pausing on CI\n');
       return;
     }
-    process.stderr.write(`Paused: inspect ${this.info.appName} (pid ${this.pid}), e.g. with \`gammaray --connect\`. Press Enter to continue.\n`);
-    await new Promise<void>((resolve) => {
-      process.stdin.resume();
-      process.stdin.once('data', () => {
-        process.stdin.pause();
-        resolve();
-      });
-    });
+    await (await this.inspector()).pause();
+  }
+
+  /** The inspector for this application, started on first use (see pause()). */
+  async inspector(options: InspectorOptions = {}): Promise<Inspector> {
+    this.inspectorInstance ??= Inspector.start(this, options);
+    return this.inspectorInstance;
+  }
+
+  /** Removes the highlight drawn by Locator.highlight(). */
+  async hideHighlight(): Promise<void> {
+    await this.connection.call('hideHighlight', {});
   }
 
   /** Accessibility tree of all windows as YAML (Playwright's ARIA snapshot format). */
@@ -417,6 +427,7 @@ export class QtApp {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    await this.inspectorInstance?.then((i) => i.close()).catch(() => undefined);
     // finalize recordings while the application can still deliver the last frames
     const results = await Promise.allSettled([...this.videos].map((v) => v.stop()));
     this.connection.close();

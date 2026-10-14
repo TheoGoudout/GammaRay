@@ -506,6 +506,17 @@ export class Locator {
     return this.selectedValues(options);
   }
 
+  /**
+   * Highlights the matching elements inside the application (boxes over them, also visible
+   * in screenshots and videos) until app.hideHighlight() or the next highlight.
+   */
+  async highlight(): Promise<void> {
+    await step(`${this}.highlight`, async () => {
+      const handles = (await this.elements()).map((e) => e.handle);
+      await this.app.connection.call('highlight', { handles, label: this.toString() });
+    });
+  }
+
   /** The selected rows of an item view (in row order), or the current text of a combo box. */
   async selectedValues(options: TimeoutOptions = {}): Promise<string[]> {
     const handle = await this.handle(options);

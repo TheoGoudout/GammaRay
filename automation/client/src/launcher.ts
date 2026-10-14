@@ -177,6 +177,7 @@ export async function launch(appPath: string, args: string[] = [], options: Laun
     if (options.defaultTimeout) app.setDefaultTimeout(options.defaultTimeout);
     app.slowMo = options.slowMo ?? 0;
     app.expectTimeout = options.expectTimeout;
+    if (process.env.QTPW_DEBUG) await debugMode(app);
     if (options.recordVideo) {
       const { dir, format, ...videoOptions } = options.recordVideo;
       const path = join(dir, `${randomUUID()}.${format ?? 'mp4'}`);
@@ -212,7 +213,16 @@ export async function attach(target: number | string, options: AttachOptions = {
   const { connection, info } = await handshake(url, timeout);
   const app = new QtApp(connection, info);
   if (options.defaultTimeout) app.setDefaultTimeout(options.defaultTimeout);
+  if (process.env.QTPW_DEBUG) await debugMode(app);
   return app;
+}
+
+/** QTPW_DEBUG=1 (like PWDEBUG=1): no timeouts, and the inspector pauses before every action. */
+async function debugMode(app: QtApp): Promise<void> {
+  const day = 24 * 3600 * 1000;
+  app.setDefaultTimeout(day);
+  app.expectTimeout = day;
+  await app.inspector({ step: true });
 }
 
 async function readPortFile(path: string): Promise<string | undefined> {

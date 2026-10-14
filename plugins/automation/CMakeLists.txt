@@ -19,6 +19,8 @@ if(NOT GAMMARAY_CLIENT_ONLY_BUILD)
         automationelement.h
         automationhandles.cpp
         automationhandles.h
+        automationhighlight.cpp
+        automationhighlight.h
         automationinput.cpp
         automationinput.h
         automationjson.cpp

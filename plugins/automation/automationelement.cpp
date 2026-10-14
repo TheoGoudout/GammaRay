@@ -293,7 +293,9 @@ QString Element::displayTypeName(const QObject *obj)
     const QString qmlType = ObjectDataProvider::typeName(obj);
     if (qmlType != QLatin1String(obj->metaObject()->className()))
         return qmlType.mid(qmlType.lastIndexOf(QLatin1Char('/')) + 1);
-    return stripQmlSuffix(QString::fromLatin1(obj->metaObject()->className()));
+    const QString cls = stripQmlSuffix(QString::fromLatin1(obj->metaObject()->className()));
+    const int ns = cls.lastIndexOf(QLatin1String("::"));
+    return ns >= 0 ? cls.mid(ns + 2) : cls; // without namespaces, like the type selector accepts
 }
 
 bool Element::hasGeometry(const QObject *obj)

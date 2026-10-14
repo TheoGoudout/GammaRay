@@ -14,6 +14,7 @@
 #define GAMMARAY_AUTOMATION_H
 
 #include "automationhandles.h"
+#include "automationhighlight.h"
 #include "automationjson.h"
 
 #include <core/toolfactory.h>
@@ -113,6 +114,7 @@ private:
     QHash<QString, Handler> m_handlers;
     QHash<QWebSocket *, Session> m_sessions;
     QObject *m_jsEngine = nullptr; // private QJSEngine for evaluate() on non-QML objects
+    Automation::Highlighter *m_highlighter = nullptr;
     qint64 m_nextSpyId = 1;
     quint32 m_nextRecordingId = 1;
 

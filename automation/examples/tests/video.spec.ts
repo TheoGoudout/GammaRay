@@ -54,8 +54,9 @@ test.describe('video recording', () => {
     const started = Date.now();
     await loginFlow(app);
     await new Promise((r) => setTimeout(r, 300));
-    expect(await video.stop()).toBe(path);
+    // before stop(): finishing the encoding takes a while, especially under load
     const elapsed = (Date.now() - started) / 1000;
+    expect(await video.stop()).toBe(path);
 
     const info = ffprobe(path);
     expect(info.codec).toBe('h264');
@@ -63,9 +64,10 @@ test.describe('video recording', () => {
     expect(info.width).toBeGreaterThanOrEqual(920);
     expect(info.height).toBeGreaterThanOrEqual(760);
     expect(info.width % 2).toBe(0);
-    // plays back in real time: constant 25 fps for the whole session
-    expect(info.duration).toBeGreaterThan(elapsed - 0.5);
-    expect(info.duration).toBeLessThan(elapsed + 0.5);
+    // plays back in real time: constant 25 fps for the whole session (which started before
+    // startVideo() returned and ended after stop() was called)
+    expect(info.duration).toBeGreaterThan(elapsed - 0.1);
+    expect(info.duration).toBeLessThan(elapsed + 1);
     expect(info.frames).toBeGreaterThanOrEqual(Math.floor(info.duration * 25) - 1);
     await testInfo.attach('session', { path, contentType: 'video/mp4' });
   });

@@ -4,6 +4,7 @@
 
 // qt-playwright command line:
 //   qt-playwright codegen [--output <file>] [--gammaray <path>] [--headless] <app> [app args...]
+//   qt-playwright inspect [--port <port>] [--gammaray <path>] [--headless] <app> [app args...]
 
 import { writeFileSync } from 'node:fs';
 import { renderAction } from './codegen';
@@ -13,19 +14,52 @@ function usage(): never {
   process.stderr.write(
     [
       'Usage: qt-playwright codegen [options] <application> [arguments...]',
+      '       qt-playwright inspect [options] <application> [arguments...]',
       '',
-      'Launches the application under GammaRay and records your interactions as a',
-      'qt-playwright test. Close the application (or press Ctrl+C) to finish.',
+      'codegen  launches the application under GammaRay and records your interactions as a',
+      '         qt-playwright test. Close the application (or press Ctrl+C) to finish.',
+      'inspect  launches the application and opens the inspector: a live view of its windows',
+      '         to pick locators, try locators (matches are highlighted in the application)',
+      '         and record code.',
       '',
       'Options:',
-      '  -o, --output <file>   write the test to <file> instead of stdout',
+      '  -o, --output <file>   codegen: write the test to <file> instead of stdout',
+      '  --test-name <name>    codegen: name of the generated test',
+      '  --port <port>         inspect: port of the inspector (default: any free port)',
+      '  --no-open             inspect: only print the inspector URL, do not open a browser',
       '  --gammaray <path>     the gammaray launcher (default: $QT_PLAYWRIGHT_GAMMARAY or PATH)',
       '  --headless            run without a display (QT_QPA_PLATFORM=offscreen)',
-      '  --test-name <name>    name of the generated test',
       '',
     ].join('\n'),
   );
   process.exit(2);
+}
+
+async function inspect(argv: string[]): Promise<void> {
+  let gammaray: string | undefined;
+  let headless = false;
+  let port: number | undefined;
+  let open: boolean | undefined;
+  while (argv.length && argv[0].startsWith('-')) {
+    const opt = argv.shift()!;
+    if (opt === '--') break;
+    else if (opt === '--port') port = Number(argv.shift());
+    else if (opt === '--no-open') open = false;
+    else if (opt === '--gammaray') gammaray = argv.shift();
+    else if (opt === '--headless') headless = true;
+    else usage();
+  }
+  const [appPath, ...args] = argv;
+  if (!appPath) usage();
+  const app = await launch(appPath, args, { gammaray, headless, printOutput: false, timeout: 60_000 });
+  await app.inspector({ port, open });
+  process.stderr.write(`Inspecting ${appPath} (pid ${app.pid}). Close the application or press Ctrl+C to finish.\n`);
+  const finish = async () => {
+    await app.close().catch(() => undefined);
+    process.exit(0);
+  };
+  process.once('SIGINT', () => void finish());
+  app.on('close', () => void finish());
 }
 
 async function codegen(argv: string[]): Promise<void> {
@@ -72,8 +106,9 @@ async function codegen(argv: string[]): Promise<void> {
 }
 
 const [command, ...rest] = process.argv.slice(2);
-if (command === 'codegen') {
-  codegen(rest).catch((e) => {
+const commands: Record<string, (argv: string[]) => Promise<void>> = { codegen, inspect };
+if (commands[command]) {
+  commands[command](rest).catch((e) => {
     process.stderr.write(`${(e as Error).message}\n`);
     process.exit(1);
   });

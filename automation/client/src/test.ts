@@ -82,6 +82,8 @@ export const test = base.extend<QtFixtures & QtOptions>({
     const recordVideo =
       videoMode === 'on' || videoMode === 'retain-on-failure' || (videoMode === 'on-first-retry' && testInfo.retry === 1);
 
+    // QTPW_DEBUG=1: stepping in the inspector, like PWDEBUG=1 (no test timeout)
+    if (process.env.QTPW_DEBUG) testInfo.setTimeout(0);
     const app = await launch(executable, args ?? [], {
       defaultTimeout: actionTimeout || undefined,
       ...launchOptions,
