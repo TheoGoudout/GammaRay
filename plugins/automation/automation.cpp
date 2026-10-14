@@ -541,7 +541,7 @@ void AutomationServer::enqueueClick(QObject *target, const QJsonObject &params, 
     }
 }
 
-void AutomationServer::enqueueTyping(QObject *target, const QString &text, bool clearFirst, const ReplyPtr &reply)
+void AutomationServer::enqueueTyping(QObject *target, const QString &text, bool clearFirst, const ReplyPtr &reply, bool commitWithEnter)
 {
     const QPointer<QObject> obj(target);
     auto window = std::make_shared<QPointer<QWindow>>();
@@ -585,12 +585,18 @@ void AutomationServer::enqueueTyping(QObject *target, const QString &text, bool 
         keyStep(selectAll, false);
         Input::KeySpec backspace;
         Input::parseKey(QStringLiteral("Backspace"), &backspace, &err);
-        keyStep(backspace, text.isEmpty());
+        keyStep(backspace, text.isEmpty() && !commitWithEnter);
     }
     for (int i = 0; i < text.size(); ++i)
-        keyStep(Input::keyForCharacter(text.at(i)), i == text.size() - 1);
-    if (!clearFirst && text.isEmpty())
+        keyStep(Input::keyForCharacter(text.at(i)), i == text.size() - 1 && !commitWithEnter);
+    if (commitWithEnter) {
+        Input::KeySpec enter;
+        QString err;
+        Input::parseKey(QStringLiteral("Enter"), &enter, &err);
+        keyStep(enter, true);
+    } else if (!clearFirst && text.isEmpty()) {
         m_input->enqueue([=]() { reply->ok(); });
+    }
 }
 
 // --- API -------------------------------------------------------------------------
@@ -807,8 +813,33 @@ void AutomationServer::registerHandlers()
         enqueueTyping(obj, params.value(QStringLiteral("text")).toString(), false, reply);
     };
     h[QStringLiteral("fill")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
-        if (QObject *obj = resolve(params, reply))
-            enqueueTyping(obj, params.value(QStringLiteral("text")).toString(), true, reply);
+        QObject *obj = resolve(params, reply);
+        if (!obj)
+            return;
+#ifdef QT_WIDGETS_LIB
+        if (auto item = qobject_cast<ViewItem *>(obj)) {
+            // item view rows/cells: open the view's editor, type into it, commit with Enter
+            if (!item->isEditable()) {
+                reply->fail(NotActionable, QStringLiteral("the item is not editable"));
+                return;
+            }
+            const QPointer<ViewItem> row(item);
+            m_input->enqueue([=]() {
+                if (!row || !row->isValid()) {
+                    reply->fail(StaleHandle, QStringLiteral("the item no longer exists"));
+                    return;
+                }
+                QAbstractItemView *view = row->view();
+                view->window()->activateWindow();
+                view->setFocus(Qt::OtherFocusReason);
+                view->setCurrentIndex(row->index());
+                view->edit(row->index());
+            });
+            enqueueTyping(nullptr, params.value(QStringLiteral("text")).toString(), true, reply, true);
+            return;
+        }
+#endif
+        enqueueTyping(obj, params.value(QStringLiteral("text")).toString(), true, reply);
     };
 
     h[QStringLiteral("press")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {

@@ -963,6 +963,10 @@ QVector<QObject *> Element::accessibleChildren(QObject *obj)
 
 int Element::editableState(const QObject *obj)
 {
+#ifdef QT_WIDGETS_LIB
+    if (auto item = viewItem(obj)) // rows that cannot be edited are not inputs at all
+        return !item->isEditable() ? -1 : item->isEnabled() ? 1 : 0;
+#endif
     const QMetaObject *mo = obj->metaObject();
     const int readOnlyIdx = mo->indexOfProperty("readOnly");
     const int editableIdx = mo->indexOfProperty("editable"); // QComboBox, QML ComboBox/SpinBox

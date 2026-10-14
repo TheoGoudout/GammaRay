@@ -102,7 +102,7 @@ private:
 
     // input actions
     void enqueueClick(QObject *obj, const QJsonObject &params, int clickCount, const ReplyPtr &reply);
-    void enqueueTyping(QObject *obj, const QString &text, bool clearFirst, const ReplyPtr &reply);
+    void enqueueTyping(QObject *obj, const QString &text, bool clearFirst, const ReplyPtr &reply, bool commitWithEnter = false);
 
     Probe *m_probe;
     QWebSocketServer *m_server = nullptr;

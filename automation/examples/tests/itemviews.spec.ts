@@ -54,6 +54,15 @@ test.describe('item view rows', () => {
     await expect(carol.getByRole('cell').nth(1)).toHaveText('45');
     await table.getByRole('cell', { name: 'Rome' }).click();
     await expect(app.locator('#dataStatus')).toHaveText('Selected Dave');
+
+    // fill() edits a cell through the view's editor
+    const city = table.getByRole('row').filter({ hasText: 'Bob' }).getByRole('cell').nth(2);
+    await expect(city).toBeEditable();
+    await city.fill('Lyon');
+    await expect(city).toHaveText('Lyon');
+    await expect(table.getByRole('row', { name: 'Bob 27 Lyon' })).toHaveCount(1);
+    // read-only rows are not inputs
+    await expect(app.locator('#tagList').getByRole('listitem', { name: 'red' }).fill('x', { timeout: 300 })).rejects.toThrow(/not an editable element/);
   });
 
   test('multi-selection lists: selectOption and toHaveValues', async ({ app }) => {

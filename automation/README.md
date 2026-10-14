@@ -200,7 +200,8 @@ more specific selector, scope with `>>`, or use `.first()`, `.last()` or `.nth(i
 | `app.waitForEvent('dialog' \| 'filechooser' \| 'objectcreated' \| 'close')`, `app.on('dialog' \| 'close')`, `app.waitForDialog()`, `app.waitForFileChooser()` | events |
 | `app.waitForObject(sel)`, `app.onObjectCreated(cb)`, `app.onObjectDestroyed(cb)` | object lifecycle events |
 | `app.video()`, `app.startVideo(path, options)` | session video recording (see below) |
-| `app.tracing.start()/stop({ path })`, `app.startCodegen()`, `app.pause()` | tracing, codegen, debugging |
+| `app.tracing.start()/stop({ path })`, `app.startCodegen()` | tracing (Playwright's trace.zip), codegen |
+| `app.pause()`, `app.inspector()`, `app.hideHighlight()` | debugging: the inspector, highlights |
 | `app.setDefaultTimeout(ms)`, `app.expectTimeout`, `app.slowMo`, `app.setTestIdAttribute(prop)`, `app.pid`, `app.info`, `app.output()` | misc |
 
 Remote or embedded targets: start the app on the device with
@@ -224,11 +225,12 @@ and `timeout` to override the default.
 | `pressSequentially(text, { delay })` / `type(text)` | `evaluate(fn, arg)`, `evaluateAll(fn, arg)` | `filter({ hasText, hasNotText, has, hasNot, visible })` |
 | `press("Control+A")` | `textContent()`, `inputValue()` | `and(other)`, `or(other)` |
 | `check()`, `uncheck()`, `setChecked(b)` | `isVisible()`, `isHidden()`, `isEnabled()`, `isChecked()` | `first()`, `last()`, `nth(i)`, `visible()` |
-| `selectOption(labelOrValue \| { label, value, index })` | `boundingBox()`, `describe()`, `ariaSnapshot()` | `count()`, `all()`, `elements()`, `handle()` |
+| `selectOption(labelOrValue \| { label, value, index } \| [...])` | `boundingBox()`, `describe()`, `ariaSnapshot()` | `count()`, `all()`, `elements()`, `handle()` |
 | `setInputFiles(files)` (button opening a file dialog) | `screenshot({ path, window, mask, caret })` | `describe(description)` |
 | `scroll({deltaX, deltaY})` (120 = one wheel notch) | `waitFor({ state })` | |
 | `dragTo(locator)`, `dragBy(dx, dy)` | `waitForSignal(sig)`, `spy(sig)` | |
-| `focus()`, `blur()`, `scrollIntoViewIfNeeded()` | | |
+| `focus()`, `blur()`, `scrollIntoViewIfNeeded()` | `selectedValues()`, `computedStyle()` | |
+| `highlight()` | | |
 
 Input is real input. Events go through QtGui's window system interface, the same path
 as platform input and QTest. Hit testing, modality, focus changes, enter/leave, hover
@@ -265,9 +267,15 @@ All assertions support `.not`:
 - state: `toBeVisible`, `toBeHidden`, `toBeEnabled`, `toBeDisabled`, `toBeEditable`,
   `toBeChecked({checked})`, `toBeAttached`, `toBeFocused`, `toBeEmpty`,
   `toBeInViewport({ ratio })`
-- content: `toHaveText(str|re)`, `toContainText`, `toHaveValue`, `toHaveCount(n)`,
+- content: `toHaveText(str|re|array)`, `toContainText(str|re|array)`, `toHaveValue`,
+  `toHaveValues(array)` (selected rows of an item view), `toHaveCount(n)`,
   `toHaveProperty(name, value)` (alias `toHaveJSProperty`), `toHaveAttribute(name, value?)`
   (a Qt property as text), `toHaveId` (objectName / QML id), `toHaveClass` (a C++/QML type)
+- style: `toHaveCSS(name, value)`: `color` and `background-color` (from the palette, which
+  style sheets feed, or QML colors; `"#c00000"`, `"red"` and `"rgb(192, 0, 0)"` all work),
+  `font-size`, `font-weight`, `font-style`, `font-family`, `text-decoration-line`,
+  `opacity`, `width`, `height`, `visibility`, `cursor`, and for QML Rectangles
+  `border-color`, `border-width`, `border-radius`
 - accessibility: `toHaveRole`, `toHaveAccessibleName`, `toHaveAccessibleDescription`,
   `toMatchAriaSnapshot(template)`
 - pixels: `toHaveScreenshot(name?, { mask, maxDiffPixels, maxDiffPixelRatio, threshold })`
@@ -366,21 +374,77 @@ is held steady, and `mask` paints over volatile elements. Font rendering differs
 between machines, so keep baselines per platform (Playwright adds the platform suffix)
 or limit them to font-free elements.
 
+### Item views: rows as elements
+
+Rows of `QListView`, `QTreeView` and `QTableView` (and the widget variants) are
+elements, although Qt has no QObjects for them: list rows have the role `listitem`, tree
+rows `treeitem` (children of their parent row while it is expanded, with a `level`),
+and table rows `row` with `cell` children. A row is named after its text (a table row
+after its cells), so:
+
+```ts
+await app.getByRole('treeitem', { name: 'Documents' }).dblclick();
+await app.getByRole('treeitem', { name: 'report.pdf' }).check();   // the row's check box
+const row = app.locator('#peopleTable').getByRole('row').filter({ hasText: 'Carol' });
+await expect(row.getByRole('cell')).toHaveText(['Carol', '45', 'Oslo']);
+await app.locator('#tagList').selectOption(['green', 'blue']);       // Ctrl+click
+await expect(app.locator('#tagList')).toHaveValues(['green', 'blue']);
+```
+
+Rows scrolled out of view are scrolled into view (`QAbstractItemView::scrollTo`) before
+pointer actions. Rows have the properties `text`, `row`, `column`, `selected`,
+`current`, `checkable`, `checked`, `expanded` (writable), `editable`, `toolTip` and
+`cells`, and appear in ARIA snapshots and codegen. `fill()` on an editable row or cell
+opens the view's editor, types the text and commits it with Enter.
+
 ### Tracing
 
 ```ts
 await app.tracing.start({ title: 'checkout' });
 // ... actions ...
-await app.tracing.stop({ path: 'trace.html' });
+await app.tracing.stop({ path: 'trace.zip' });
 ```
 
-The trace is a self-contained HTML viewer. It lists every API call with timing, its
-locator, any error and a screenshot of all windows after it (pointer included). With
-the fixture, Playwright's `trace` option (or `qtTrace`) records traces automatically
-and attaches them to the report: `'on'`, `'retain-on-failure'`, `'on-first-retry'`,
-`'on-all-retries'` or `'retain-on-first-failure'`.
+```sh
+npx playwright show-trace trace.zip
+```
 
-![The HTML trace viewer](docs/trace-viewer.png)
+Traces use Playwright's own format, so Playwright's trace viewer opens them, as does
+trace.playwright.dev and the HTML report. Every API call is an action with its locator,
+timing, call log (what auto-waiting waited for) and error. There is a film strip of all
+windows, the application's output, and snapshots before, during and after each action,
+showing the target and the click point. Qt has no DOM, so a snapshot is a screenshot
+with the element tree laid over it: transparent elements carrying the ARIA role,
+accessible name, `data-testid` (the objectName) and text. The viewer's "Pick locator"
+therefore suggests `getByRole()`, `getByTestId()` and `getByText()` locators that work
+in qt-playwright. With the fixture, Playwright's `trace` option (or `qtTrace`) records
+traces and attaches them to the report: `'on'`, `'retain-on-failure'`,
+`'on-first-retry'`, `'on-all-retries'` or `'retain-on-first-failure'`. A `.html` path
+(or `qtTrace: { mode, format: 'html' }`) writes a self-contained HTML viewer instead.
+
+![Playwright's trace viewer with a qt-playwright trace](docs/playwright-trace-viewer.png)
+
+### Inspector and debugging
+
+`app.pause()` opens the inspector, Playwright's Inspector adapted to Qt. It is a local
+web page (127.0.0.1 only, with a random token in the URL) that offers:
+
+- a live view of all windows;
+- **Pick locator**: click an element to get the locator codegen would use;
+- a **locator playground**: type `getByRole('button', { name: 'Login' })` to see how many
+  elements match, highlighted in the view and inside the application;
+- **Resume** (F8) and **Step over** (F10);
+- the test's actions, and **Record**, which generates code from what you do.
+
+`QTPW_DEBUG=1 npx playwright test` works like `PWDEBUG=1`: no timeouts, and the
+inspector pauses before every action, with the target highlighted in the application.
+`npx qt-playwright inspect ./build/myapp` opens the inspector for an application
+without a test. `locator.highlight()` draws the same highlight from a test (it also
+shows in screenshots and videos) until `app.hideHighlight()`. To look at the object
+tree, properties and signals in depth, connect the GammaRay client
+(`gammaray --connect`) to the paused application.
+
+![The inspector](docs/inspector.png)
 
 ### Codegen
 
@@ -482,11 +546,11 @@ later requests are served from the nested event loop.
 
 ## Limitations
 
-- **Model/view rows are not elements.** Rows and cells of `QListView`, `QTableView` and
-  `QTreeView` and similar views are not QObjects. Address them by `position` inside the
-  view's viewport, or through properties and slots (`currentRow`, `setCurrentIndex`...).
-  QML delegates *are* items and work normally, but only once instantiated (off-screen
-  ListView delegates may not exist yet).
+- **Model/view rows** are elements for `QListView`, `QTreeView` and `QTableView`
+  (and subclasses), up to 5000 rows per parent. `QColumnView` and custom
+  `QAbstractItemView`s expose rows like a list. QML delegates are items and work
+  normally, but only once instantiated (off-screen ListView delegates may not exist
+  yet).
 - **Text** is an element's own text property, not the concatenated text of its
   descendants as in the DOM.
 - **QML type names** come from class names (`QQuickButton` gives `Button`,
@@ -510,12 +574,16 @@ later requests are served from the nested event loop.
   bridge is connected, so qt-playwright falls back to `Accessible.*` properties, text,
   placeholders and `checked`/`pressed` properties. Roles and names can differ slightly
   from what a screen reader announces.
-- **Codegen** records model/view rows (QListView, QTableView) as clicks on the view,
-  without the row, and doesn't record scrolling, hovering or Qt Quick drags that a
-  DragHandler handles by touch.
+- **Codegen** doesn't record scrolling, hovering, or Qt Quick drags that a DragHandler
+  handles by touch.
+- **toHaveCSS** reports what Qt knows: colors come from the palette (style sheets set
+  it when the widget is polished) or QML color properties, not from what the style
+  paints. Style sheet properties without a palette or font equivalent (margins,
+  borders of widgets, gradients) are only available as the raw `-qt-style-sheet` text.
 - **Not available:** Playwright's network interception, clock control, browser
-  contexts and storage state (no Qt equivalent), and the Playwright trace viewer and UI
-  mode (qt-playwright has its own HTML trace instead).
+  contexts and storage state (no Qt equivalent), and UI mode. Trace snapshots are
+  pictures with an element overlay, not live DOM: the viewer's DOM tools beyond
+  locator picking (CSS, console evaluation) do not apply.
 - **Platforms:** developed and tested on Linux with Qt 6.8 and the offscreen platform.
   Launching should work wherever GammaRay injection works (Windows `windll`, macOS
   preload) but is untested. Attaching by pid needs gdb or lldb and ptrace permission.

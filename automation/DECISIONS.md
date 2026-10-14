@@ -201,11 +201,17 @@ option preferred. Newest entries go at the bottom.
 
 - Options: (a) Playwright's `trace.zip` for `npx playwright show-trace`; (b) our own
   self-contained HTML trace viewer.
-- **Chosen: (b).** Playwright's trace format is an internal, versioned format built
-  around DOM snapshots and network logs. Neither exists for Qt, and following its
-  changes would be fragile. The HTML trace needs no tooling, opens from the test report,
-  and shows each API call with its locator (described as code), duration, error and a
-  composed screenshot of all windows (with the pointer) after it.
+- **First (b), now (a), with (b) as an export.** The first version shipped an HTML
+  viewer, because the trace format is internal and built around DOM snapshots. Writing
+  it turned out to be practical. Format 10 is a JSON-lines event log (`before`,
+  `after`, `input`, `log`, `screencast-frame`, `frame-snapshot`, `resource-snapshot`)
+  plus resources, and the viewer upgrades older versions itself. A "DOM" snapshot can
+  be a screenshot with the element tree laid over it as transparent elements carrying
+  ARIA attributes. That gives Playwright's viewer, the HTML report integration and
+  locator picking for free. The risk is format churn: the trace declares version 10,
+  which newer viewers keep reading via their upgrade path, and `trace.spec.ts` checks
+  the structure. Screenshots are network resources shared by the film strip and the
+  snapshots, so each is stored once.
 
 ## D21. Codegen
 
@@ -227,3 +233,56 @@ option preferred. Newest entries go at the bottom.
   unchanged (quoted = exact).
 - Locators remember how they were built, and errors, report steps and traces show
   `getByRole('button', { name: 'Login' }).first()` rather than the internal selector.
+
+## D23. Model/view rows as stand-in QObjects
+
+- Options: (a) teach every layer (handles, selectors, JSON, input) a second element
+  kind (view + QPersistentModelIndex); (b) one lightweight QObject per row (`ViewItem`)
+  that the existing layers handle like any element.
+- **Chosen: (b).** Handles, selectors, properties, describe(), ARIA snapshots and codegen
+  work unchanged. The Element functions special-case ViewItem for geometry
+  (`visualRect`), input (via the viewport), scrolling (`scrollTo`) and accessibility.
+  Stand-ins are created under a ProbeGuard and owned by the plugin (never parented to
+  the view, so the application's object tree is unchanged). They are reused while their
+  QPersistentModelIndex is valid and deleted when it isn't or when the view goes away.
+  Rows are created on demand when a query walks the view, capped at 5000 per parent.
+
+## D24. toHaveCSS on Qt
+
+- Qt has no computed CSS. `computedStyle()` maps what Qt does know to CSS names and
+  browser formatting, so Playwright habits carry over. Colors come from the palette,
+  which style sheets set during polish, or from QML color properties (a Rectangle's
+  `color` is its background). Fonts, opacity, size, visibility and cursor map directly.
+  A widget that doesn't paint its background reports `rgba(0, 0, 0, 0)`, like a
+  transparent DOM element. Expected colors are normalized (`#hex`, names), because
+  writing `rgb()` strings for Qt colors would be tedious.
+
+## D25. Inspector as a web page
+
+- Options: (a) extend the GammaRay client (Qt widgets) with Playwright's Inspector
+  features; (b) a local web page served by the test process.
+- **Chosen: (b).** Stepping, the locator playground and recording live in the test
+  process (Node), which owns the step instrumentation and the code generator. A web
+  page talks to it directly, works the same on every platform, and mirrors Playwright's
+  own Inspector, which is a web UI. The live view reuses `screenshotAll` and the
+  snapshot tree from tracing, and picking reuses codegen's locator choice. Deep
+  inspection (object tree, properties, signals, models) stays with the GammaRay
+  client, which can connect to the paused application. The server binds to 127.0.0.1
+  and requires a random token in every URL, because it evaluates locator expressions.
+- Highlights are drawn inside the application (a transparent overlay widget or Qt Quick
+  item per window), so they work without the inspector and show in screenshots and
+  videos.
+
+## D26. Core fix: ObjectTreeModel display data
+
+- CI showed `connectiontest-*-filter` crashing intermittently (a pre-existing race,
+  reproducible on the base commit under load, with or without the automation plugin).
+  The object tree's `data()` changed a row's text without `dataChanged()` in three
+  cases: an object deleted in another thread before the queued row removal ran, its
+  address reused by a new object in that window, and a rename. The recursive
+  QSortFilterProxyModel of the object inspector search then held a stale mapping and
+  crashed.
+- The model now caches the display texts it reported and publishes changes only
+  together with `dataChanged()`, from a queued call. This is outside the automation
+  feature, but it was needed for a green CI, and it is a small, contained change to
+  one model.

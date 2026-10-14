@@ -2,13 +2,14 @@
 
 In short: qt-playwright covers nearly all of Playwright's API for testing a single
 application. That includes the test runner integration, locators (role, label,
-placeholder, title, test id, text, filters, `and`/`or`), auto-waiting and strict mode,
-actions, retrying assertions (ARIA snapshots and screenshot baselines included),
-`evaluate`, coordinate-level input, dialogs and file choosers, video, tracing and
-codegen. Some features are adapted rather than identical, because Qt has no DOM, no CSS
-and no page JavaScript. What remains missing is tied to browsers: network interception,
-clock control, browser contexts and storage, and Playwright's own trace viewer and UI
-mode.
+placeholder, title, test id, text, filters, `and`/`or`) also for item view rows,
+auto-waiting and strict mode, actions, and retrying assertions (ARIA snapshots,
+screenshot baselines and `toHaveCSS` included). It also has `evaluate`,
+coordinate-level input, dialogs and file choosers, video, traces that Playwright's own
+trace viewer opens, an inspector, and codegen. Some features are adapted rather than
+identical, because Qt has no DOM, no CSS and no page JavaScript. What remains missing
+is tied to browsers (network interception, clock control, browser contexts and
+storage) or to UI mode.
 
 Legend: ✅ same name and semantics · ≈ same idea, adapted to Qt · ❌ missing ·
 ➕ qt-playwright only.
@@ -24,11 +25,12 @@ Legend: ✅ same name and semantics · ≈ same idea, adapted to Qt · ❌ missi
 | `expect.timeout` config | `qtApp.expectTimeout` (the config value is not exposed to fixtures) | ≈ |
 | `use: { screenshot }` | `qtScreenshot` (all windows attached on failure) | ≈ |
 | `use: { video }` | honored (`'on'`, `'retain-on-failure'`, `'on-first-retry'`); `qtVideo` overrides | ✅ |
-| `use: { trace }` | honored (all modes); the trace is an HTML viewer instead of `trace.zip` | ≈ |
+| `use: { trace }` | honored (all modes); Playwright's `trace.zip`, opened from the HTML report | ✅ |
 | `--update-snapshots`, snapshot dirs | used by `toHaveScreenshot` | ✅ |
 | API calls as report steps | yes, described like Playwright (`getByRole('button', { name: 'OK' }).click`) | ✅ |
 | `expect.soft`, `expect.poll`, `expect.configure`, generic matchers | passed through to Playwright's `expect` | ✅ |
-| UI mode, inspector, `codegen` | `qt-playwright codegen <app>` and `app.pause()`; no UI mode or inspector | ≈ |
+| `PWDEBUG=1`, inspector, `codegen` | `QTPW_DEBUG=1`, the inspector (web page), `qt-playwright codegen <app>` | ≈ |
+| UI mode | — | ❌ |
 
 ## Launching
 
@@ -58,7 +60,7 @@ Legend: ✅ same name and semantics · ≈ same idea, adapted to Qt · ❌ missi
 | `waitForEvent('filechooser')`, `FileChooser.setFiles/isMultiple` | same, for QFileDialog | ≈ |
 | `page.on('close')`, `waitForEvent('close')` | same | ✅ |
 | `page.on('console')` | `app.output()` (captured stdout/stderr) | ≈ |
-| `page.pause()` | `app.pause()` (waits for Enter; inspect with the GammaRay client) | ≈ |
+| `page.pause()` | `app.pause()` opens the inspector (resume, step over, pick locator) | ≈ |
 | `page.title()` | `app.windows()` titles, `expect(app).toHaveTitle()` | ≈ |
 | `page.ariaSnapshot` | `app.ariaSnapshot()` | ✅ |
 | `page.addInitScript`, `exposeFunction`, frames, workers | not applicable | ❌ |
@@ -73,23 +75,27 @@ Legend: ✅ same name and semantics · ≈ same idea, adapted to Qt · ❌ missi
 | `getByText`, `getByLabel`, `getByPlaceholder`, `getByTitle` (tooltip), `getByTestId` | same | ✅ |
 | strict mode, lazy re-resolution, auto-waiting (attached, visible, stable, enabled, editable, receives events), scroll into view, `force`, `trial` | same | ✅ |
 | `click`, `dblclick`, `hover`, `tap`, `fill`, `clear`, `press`, `pressSequentially`, `type`, `check`, `uncheck`, `setChecked`, `focus`, `blur`, `selectText`, `dragTo`, `scrollIntoViewIfNeeded`, `screenshot({ mask, caret })`, `waitFor` | same | ✅ |
-| `selectOption` | QComboBox and QML ComboBox, through their popups; one option at a time | ≈ |
+| `selectOption` | QComboBox and QML ComboBox through their popups; item views, several options with Ctrl+click | ≈ |
 | `setInputFiles` | on the button that opens a file dialog | ≈ |
 | `dispatchEvent(type)` | emits a signal / calls a slot by name | ≈ |
 | `evaluate`, `evaluateAll` | QObject wrappers in Qt's JS engine | ≈ |
 | `textContent`, `innerText`, `inputValue`, `isVisible`, `isHidden`, `isEnabled`, `isDisabled`, `isChecked`, `isEditable`, `boundingBox`, `ariaSnapshot` | same | ✅ |
 | `getAttribute(name)` | a Qt property as a string (`getProperty` for typed values) | ≈ |
-| `highlight`, `elementHandle(s)`, `contentFrame`, `frameLocator` | — (`handle()` gives a raw element id) | ❌ |
-| — | ➕ `dragBy`, `spy`, `waitForSignal`, `invoke`, `setProperty`, `getProperties`, `visible()` | ➕ |
+| `highlight` | drawn inside the application (shows in screenshots and videos); `app.hideHighlight()` | ✅ |
+| `elementHandle(s)`, `contentFrame`, `frameLocator` | — (`handle()` gives a raw element id) | ❌ |
+| rows of `<ul>`, `<table>`, `<select>` | rows of QListView/QTreeView/QTableView as `listitem`/`treeitem`/`row`/`cell` elements | ≈ |
+| — | ➕ `dragBy`, `spy`, `waitForSignal`, `invoke`, `setProperty`, `getProperties`, `visible()`, `selectedValues()`, `computedStyle()` | ➕ |
 
 ## Assertions
 
 | Playwright | qt-playwright | |
 |---|---|---|
-| `toBeVisible`, `toBeHidden`, `toBeEnabled`, `toBeDisabled`, `toBeEditable`, `toBeChecked`, `toBeAttached`, `toBeFocused`, `toBeEmpty`, `toBeInViewport`, `toHaveText`, `toContainText`, `toHaveValue`, `toHaveCount`, `toHaveRole`, `toHaveAccessibleName`, `toHaveAccessibleDescription`, `toHaveId`, `toHaveJSProperty`, `toMatchAriaSnapshot`, `toHaveScreenshot`, `.not` | same | ✅ |
+| `toBeVisible`, `toBeHidden`, `toBeEnabled`, `toBeDisabled`, `toBeEditable`, `toBeChecked`, `toBeAttached`, `toBeFocused`, `toBeEmpty`, `toBeInViewport`, `toHaveText`, `toContainText` (also with arrays), `toHaveValue`, `toHaveCount`, `toHaveRole`, `toHaveAccessibleName`, `toHaveAccessibleDescription`, `toHaveId`, `toHaveJSProperty`, `toMatchAriaSnapshot`, `toHaveScreenshot`, `.not` | same | ✅ |
+| `toHaveCSS` | colors (palette / style sheet / QML), fonts, opacity, size, visibility, cursor, QML borders | ≈ |
+| `toHaveValues` | the selected rows of an item view | ≈ |
 | `toHaveAttribute` | a Qt property compared as text | ≈ |
 | `toHaveClass` | a C++ or QML type of the element | ≈ |
-| `toHaveCSS`, `toHaveValues`, `toHaveAccessibleErrorMessage` | — | ❌ |
+| `toHaveAccessibleErrorMessage` | — (no Qt equivalent) | ❌ |
 | `expect(page).toHaveTitle/toHaveScreenshot` | `expect(app)`; ➕ `expect(app).toMatchAriaSnapshot` | ≈ |
 | `expect(page).toHaveURL` | not applicable | ❌ |
 | — | ➕ `expect(spy).toHaveBeenEmitted/Times/With`, `toHaveProperty` | ➕ |
@@ -106,17 +112,13 @@ Legend: ✅ same name and semantics · ≈ same idea, adapted to Qt · ❌ missi
 
 | Playwright | qt-playwright | |
 |---|---|---|
-| Trace viewer (`trace.zip`, `show-trace`) | self-contained HTML trace: actions, timing, errors, screenshots | ≈ |
-| `codegen` | `qt-playwright codegen <app>`: role/label/test-id locators, fill, press, check, selectOption, drags | ✅ |
-| Inspector, UI mode, VS Code extension | — (use the GammaRay client to inspect a running app) | ❌ |
+| Trace viewer (`trace.zip`, `show-trace`) | Playwright's own viewer: actions, call logs, errors, film strip, snapshots (screenshot + element overlay) with locator picking | ✅ |
+| `codegen` | `qt-playwright codegen <app>`: role/label/test-id locators, item view rows, fill, press, check, selectOption, modifiers, drags | ✅ |
+| Inspector | web inspector: live view, pick locator, locator playground with highlights, resume / step over, recording; `qt-playwright inspect <app>` | ≈ |
+| UI mode, VS Code extension | — (the GammaRay client inspects objects, properties and signals in depth) | ❌ |
 
-## Remaining gaps worth closing
+## Remaining gaps
 
-1. Playwright's own trace format, so `npx playwright show-trace` works. This needs DOM
-   snapshots, or at least screencast frames in its format.
-2. `toHaveCSS` for Qt style sheets / palettes, and `toHaveValues` for multi-selection
-   views.
-3. Model/view rows as elements (QListView, QTableView), via
-   `QAbstractItemView::visualRect`, so rows can be located, clicked and recorded by
-   codegen.
-4. An inspector UI, which could build on GammaRay's existing client.
+1. UI mode (watch mode, time-travel through a test run) and the VS Code extension.
+2. Live DOM in trace snapshots: snapshots are pictures with an element overlay, so the
+   viewer's DOM-specific tools (CSS inspection, console evaluation) do not apply.
