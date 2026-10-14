@@ -15,6 +15,7 @@
  *   });
  */
 
+import { join } from 'node:path';
 import { test as base, expect as pwExpect, type Expect } from '@playwright/test';
 import type { QtApp } from './app';
 import type { TracingStartOptions } from './tracing';
@@ -90,17 +91,29 @@ export const test = base.extend<QtFixtures & QtOptions>({
       recordVideo: recordVideo ? { ...videoOptions, dir: testInfo.outputPath('videos') } : launchOptions.recordVideo,
     });
     const traceSetting = (qtTrace ?? trace) as QtOptions['qtTrace'];
-    const { mode: traceMode, format: traceFormat, ...traceOptions } =
-      typeof traceSetting === 'string' ? { mode: traceSetting, format: undefined } : (traceSetting ?? { mode: 'off' as const, format: undefined });
+    // Playwright's trace option may carry runner-only fields (UI mode: { live, sources })
+    type TraceObject = { mode: TraceMode; format?: 'zip' | 'html'; live?: boolean; sources?: boolean } & TracingStartOptions;
+    const traceObject: TraceObject =
+      typeof traceSetting === 'string' ? { mode: traceSetting } : ((traceSetting as TraceObject | undefined) ?? { mode: 'off' });
+    const { mode: traceMode, format: traceFormat, live, sources: _sources, ...traceOptions } = traceObject;
     const recordTrace =
       traceMode === 'on' ||
       traceMode === 'retain-on-failure' ||
       (traceMode === 'on-first-retry' && testInfo.retry === 1) ||
       (traceMode === 'on-all-retries' && testInfo.retry > 0) ||
       (traceMode === 'retain-on-first-failure' && testInfo.retry === 0);
-    if (recordTrace) await app.tracing.start({ title: testInfo.titlePath.join(' › '), ...traceOptions });
+    // UI mode (trace: { live: true }) shows traces while the test runs: write ours next to
+    // the runner's live trace, in the worker's artifacts directory, prefixed with the test id
+    const liveDir = live ? join(testInfo.project.outputDir, `.playwright-artifacts-${testInfo.workerIndex}`, 'traces') : undefined;
+    if (recordTrace)
+      await app.tracing.start({
+        title: testInfo.titlePath.join(' › '),
+        ...traceOptions,
+        live: liveDir ? { dir: liveDir, prefix: `${testInfo.testId}-qt` } : undefined,
+      });
 
-    setStepRunner((title, body) => base.step(title, body, { box: true }));
+    // API calls are report steps; the step id lets traces merge them with the runner's steps
+    setStepRunner((title, body) => base.step(title, (stepInfo) => body((stepInfo as { _stepId?: string })._stepId), { box: true }));
     setScreenshotComparator((png, name, options) => {
       const snapshotName = name
         ? name.endsWith('.png') ? name : `${name}.png`

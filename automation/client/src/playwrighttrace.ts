@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { createHash } from 'node:crypto';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { QtApp } from './app';
 import type { InputInfo, StepInfo } from './instrumentation';
 import { zip, type ZipEntry } from './zip';
@@ -55,13 +57,17 @@ export interface PlaywrightTraceOptions {
   snapshots?: boolean;
   /** Scale of the screenshots (default 1). */
   scale?: number;
+  /**
+   * Also write the trace as it is recorded, as `<dir>/<prefix>.trace` / `.network` and
+   * `<dir>/resources/`, which Playwright's UI mode shows while the test runs.
+   */
+  live?: { dir: string; prefix: string };
 }
 
 export class PlaywrightTraceRecorder {
   private readonly events: object[] = [];
   private readonly network: object[] = [];
   private readonly resources = new Map<string, Buffer>();
-  private readonly t0 = performance.now();
   private canvas = { x: 0, y: 0, width: 800, height: 600 };
   private lastFrame: { url: string; name: string; at: number } | undefined;
   private failed = false;
@@ -70,7 +76,12 @@ export class PlaywrightTraceRecorder {
     private readonly app: QtApp,
     private readonly options: PlaywrightTraceOptions = {},
   ) {
-    this.events.push({
+    if (options.live) {
+      mkdirSync(join(options.live.dir, 'resources'), { recursive: true });
+      writeFileSync(join(options.live.dir, `${options.live.prefix}.trace`), '');
+      writeFileSync(join(options.live.dir, `${options.live.prefix}.network`), '');
+    }
+    this.emit({
       type: 'context-options',
       version: 10,
       origin: 'library',
@@ -85,15 +96,27 @@ export class PlaywrightTraceRecorder {
       testIdAttributeName: 'data-testid',
       contextId: 'context@qt',
     });
-    this.events.push({ type: 'event', time: this.now(), class: 'BrowserContext', method: 'page', params: { pageId: PAGE_ID } });
+    this.emit({ type: 'event', time: this.now(), class: 'BrowserContext', method: 'page', params: { pageId: PAGE_ID } });
   }
 
+  // Playwright's monotonic clock, so actions line up with the test runner's own trace
   private now(): number {
-    return performance.now() - this.t0;
+    return Math.floor(performance.now() * 1e3) / 1e3;
   }
 
   private callId(step: StepInfo): string {
-    return `call@${step.id}`;
+    // the test runner's step id: the viewer merges our action with the runner's step
+    return step.stepId ?? `call@${step.id}`;
+  }
+
+  private emit(event: object): void {
+    this.events.push(event);
+    if (this.options.live) appendFileSync(join(this.options.live.dir, `${this.options.live.prefix}.trace`), JSON.stringify(event) + '\n');
+  }
+
+  private emitNetwork(event: object): void {
+    this.network.push(event);
+    if (this.options.live) appendFileSync(join(this.options.live.dir, `${this.options.live.prefix}.network`), JSON.stringify(event) + '\n');
   }
 
   async start(): Promise<void> {
@@ -102,7 +125,7 @@ export class PlaywrightTraceRecorder {
 
   async before(step: StepInfo): Promise<void> {
     const { cls, method, selector } = parseTitle(step.title);
-    this.events.push({
+    this.emit({
       type: 'before',
       callId: this.callId(step),
       startTime: this.now(),
@@ -119,18 +142,18 @@ export class PlaywrightTraceRecorder {
 
   async input(step: StepInfo, input: InputInfo): Promise<void> {
     const point = input.point ? this.toCanvas(input.point) : undefined;
-    this.events.push({ type: 'input', callId: this.callId(step), point });
+    this.emit({ type: 'input', callId: this.callId(step), point });
     await this.snapshot(step, 'action', input.handle, point);
   }
 
   log(step: StepInfo, message: string): void {
-    this.events.push({ type: 'log', callId: this.callId(step), time: this.now(), message });
+    this.emit({ type: 'log', callId: this.callId(step), time: this.now(), message });
   }
 
   async after(step: StepInfo, error: unknown): Promise<void> {
     await this.snapshot(step, 'after');
     const err = error as Error | undefined;
-    this.events.push({
+    this.emit({
       type: 'after',
       callId: this.callId(step),
       endTime: this.now(),
@@ -142,7 +165,7 @@ export class PlaywrightTraceRecorder {
 
   /** Free-form output of the application (stdout lines). */
   stdout(text: string): void {
-    if (text) this.events.push({ type: 'stdout', timestamp: this.now(), text });
+    if (text) this.emit({ type: 'stdout', timestamp: this.now(), text });
   }
 
   /** Resource name of the latest screenshot. */
@@ -172,6 +195,7 @@ export class PlaywrightTraceRecorder {
 
   private addResource(data: Buffer, ext: string): string {
     const name = `${createHash('sha1').update(data).digest('hex')}.${ext}`;
+    if (this.options.live && !this.resources.has(name)) writeFileSync(join(this.options.live.dir, 'resources', name), data);
     this.resources.set(name, data);
     return name;
   }
@@ -189,7 +213,7 @@ export class PlaywrightTraceRecorder {
     const url = `${RESOURCE_HOST}/frames/${name}`;
     const at = this.now();
     if (this.lastFrame?.url !== url) {
-      this.events.push({
+      this.emit({
         type: 'screencast-frame',
         pageId: PAGE_ID,
         file: `resources/${name}`,
@@ -197,7 +221,7 @@ export class PlaywrightTraceRecorder {
         height: r.height,
         timestamp: at,
       });
-      this.network.push({
+      this.emitNetwork({
         type: 'resource-snapshot',
         snapshot: {
           _frameref: FRAME_ID,
@@ -245,7 +269,7 @@ export class PlaywrightTraceRecorder {
         '.qt:hover{outline:1px dashed rgba(64,160,255,.8)}',
       ].join('\n');
       const html: HtmlNode = ['HTML', {}, ['HEAD', {}, ['STYLE', {}, css]], ['BODY', {}, ...body]];
-      this.events.push({
+      this.emit({
         type: 'frame-snapshot',
         snapshot: {
           callId,

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Klarälvdalens Datakonsult AB, a KDAB Group company <info@kdab.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import { expect, test } from 'qt-playwright/test';
 
@@ -55,7 +57,7 @@ test('tracing writes Playwright trace.zip files', async ({ app }, testInfo) => {
   // the click has an input point and before/action/after snapshots marking the target
   const click = ofType('before').find((e) => e.title.endsWith(".getByRole('button', { name: 'Login' }).click"));
   // the call site, for the viewer's Source tab (and UI mode)
-  expect(click.stack[0]).toMatchObject({ file: expect.stringMatching(/trace\.spec\.ts$/), line: 34 });
+  expect(click.stack[0]).toMatchObject({ file: expect.stringMatching(/trace\.spec\.ts$/), line: 36 });
   expect(ofType('input').find((e) => e.callId === click.callId).point).toEqual({ x: expect.any(Number), y: expect.any(Number) });
   const snapshots = ofType('frame-snapshot').filter((e) => e.snapshot.callId === click.callId);
   expect(snapshots.map((s) => s.snapshot.phase)).toEqual(['before', 'action', 'after']);
@@ -71,4 +73,26 @@ test('tracing writes Playwright trace.zip files', async ({ app }, testInfo) => {
   const network = files.get('trace.network')!.toString().trim().split('\n').map((l) => JSON.parse(l));
   expect(network.length).toBe(frames.length);
   expect(files.get(frames[0].file)!.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8])); // JPEG
+});
+
+test.describe('live traces (UI mode)', () => {
+  // what UI mode sets: the trace is written while the test runs
+  test.use({ qtTrace: { mode: 'on', live: true } as never });
+
+  test('trace events are written as they happen, merged with the runner steps', async ({ app }, testInfo) => {
+    const dir = join(testInfo.project.outputDir, `.playwright-artifacts-${testInfo.workerIndex}`, 'traces');
+    const file = join(dir, `${testInfo.testId}-qt.trace`);
+    await app.locator('#widgetsWindow').getByLabel('User:').fill('live');
+
+    // already on disk, before the test ends
+    const events = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const fill = events.find((e) => e.type === 'before' && e.title.endsWith(".getByLabel('User:').fill"));
+    // the runner's step id, so the viewer shows one action rather than two
+    expect(fill.callId).not.toMatch(/^call@/);
+    expect(events.some((e) => e.type === 'after' && e.callId === fill.callId)).toBe(true);
+    expect(events.filter((e) => e.type === 'frame-snapshot' && e.snapshot.callId === fill.callId)).toHaveLength(3);
+    const frame = events.find((e) => e.type === 'screencast-frame');
+    expect(existsSync(join(dir, frame.file))).toBe(true);
+    expect(readFileSync(join(dir, `${testInfo.testId}-qt.network`), 'utf8')).toContain('resource-snapshot');
+  });
 });

@@ -298,3 +298,11 @@ option preferred. Newest entries go at the bottom.
   frames outside qt-playwright), so the Source tab highlights the line. Screenshots are
   stored as network resources (D20) and therefore show up in the Network tab, a
   cosmetic side effect.
+- Live updates: UI mode sets `trace: { mode: 'on', live: true }` and, while a test runs,
+  loads every trace file starting with the test id from the worker's
+  `.playwright-artifacts-<worker>/traces/` directory. The fixture then writes its trace
+  there too (`<testId>-qt.trace` / `.network`, screenshots in `resources/`) as events
+  happen. Actions use the runner's step id as call id and the runner's clock
+  (`performance.now()`), so the viewer merges each of our actions with the runner's
+  step instead of listing it twice. The directory layout is Playwright-internal; if it
+  changes, live updates degrade to showing the trace when the test ends.

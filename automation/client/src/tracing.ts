@@ -16,6 +16,8 @@ export interface TracingStartOptions {
   scale?: number;
   /** Title shown in the trace viewer. */
   title?: string;
+  /** Write the trace while recording (for Playwright's UI mode, see PlaywrightTraceOptions.live). */
+  live?: { dir: string; prefix: string };
 }
 
 export interface TracingStopOptions {
@@ -70,6 +72,7 @@ export class Tracing {
       screenshots: this.options.screenshots,
       snapshots: this.options.snapshots,
       scale: this.options.scale,
+      live: options.live,
     });
     this.recorder = recorder;
     await recorder.start();

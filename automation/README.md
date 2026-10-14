@@ -435,8 +435,11 @@ npx playwright test --ui
 It lists, filters, runs and watches the tests. For each test it shows the actions with
 the matching source line, the film strip, and before/after snapshots of the
 application with the target highlighted (from the traces described above, which UI
-mode turns on). `--ui-host`/`--ui-port` serve it to a browser, e.g. from a headless
-machine.
+mode turns on). Traces are written while the test runs, so actions and snapshots
+appear live, each action merged with the runner's step for the same call.
+`--ui-host`/`--ui-port` serve it to a browser, e.g. from a headless machine.
+
+![UI mode while a test runs](docs/ui-mode-live.png)
 
 ![Playwright's UI mode running a qt-playwright test](docs/ui-mode.png)
 

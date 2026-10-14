@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Klarälvdalens Datakonsult AB, a KDAB Group company <info@kdab.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-type StepRunner = <T>(title: string, body: () => Promise<T>) => Promise<T>;
+/** Runs a reported step; passes the runner's id of the step to @p body, if it has one. */
+type StepRunner = <T>(title: string, body: (stepId?: string) => Promise<T>) => Promise<T>;
 
 /** A reported (top-level) API call. */
 export interface StepInfo {
@@ -12,6 +13,8 @@ export interface StepInfo {
   startTime: number;
   /** Where the call was made from (the test code), innermost first. */
   stack: StackFrame[];
+  /** The test runner's id of this step (with the @playwright/test integration). */
+  stepId?: string;
 }
 
 export interface StackFrame {
@@ -81,8 +84,12 @@ export async function step<T>(title: string, body: () => Promise<T>): Promise<T>
   current = info;
   let error: unknown;
   try {
-    for (const l of [...listeners]) await l.before?.(title, info);
-    return runner ? await runner(title, body) : await body();
+    const run = async (stepId?: string) => {
+      info.stepId = stepId;
+      for (const l of [...listeners]) await l.before?.(title, info);
+      return body();
+    };
+    return runner ? await runner(title, run) : await run();
   } catch (e) {
     error = e;
     throw e;
