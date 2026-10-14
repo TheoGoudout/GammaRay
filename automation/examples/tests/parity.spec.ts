@@ -297,14 +297,14 @@ test.describe('snapshots, screenshots, traces', () => {
   });
 
   test('tracing records actions, errors and screenshots', async ({ app }, testInfo) => {
-    const path = testInfo.outputPath('trace.html');
     await app.tracing.start({ title: 'login trace' });
     const w = app.locator('#widgetsWindow');
     await w.getByLabel('User:').fill('admin');
     await w.getByLabel('Password:').fill('secret');
     await w.getByRole('button', { name: 'Login' }).click();
     await w.locator('#nope').click({ timeout: 100 }).catch(() => undefined);
-    const html = await app.tracing.stop({ path });
+    const path = testInfo.outputPath('trace.html');
+    const html = (await app.tracing.stop({ path })).toString();
     expect(html).toContain('login trace');
     expect(html).toContain('fill');
     expect(html).toContain('Timeout 100ms exceeded');

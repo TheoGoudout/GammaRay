@@ -3,15 +3,36 @@
 
 type StepRunner = <T>(title: string, body: () => Promise<T>) => Promise<T>;
 
+/** A reported (top-level) API call. */
+export interface StepInfo {
+  /** Unique per process. */
+  id: number;
+  title: string;
+  /** performance.now() when the call started. */
+  startTime: number;
+}
+
+/** Where an action is about to deliver input: the element and the point, in global coordinates. */
+export interface InputInfo {
+  handle?: number;
+  point?: { x: number; y: number };
+}
+
 /** Observes top-level API calls (used by tracing). */
 export interface StepListener {
-  before?(title: string): void | Promise<void>;
-  after?(title: string, error: unknown, durationMs: number): void | Promise<void>;
+  before?(title: string, step: StepInfo): void | Promise<void>;
+  after?(title: string, error: unknown, durationMs: number, step: StepInfo): void | Promise<void>;
+  /** The call is about to send input (after auto-waiting succeeded). */
+  input?(step: StepInfo, input: InputInfo): void | Promise<void>;
+  /** A call log line (what auto-waiting is waiting for). */
+  log?(step: StepInfo, message: string): void;
 }
 
 let runner: StepRunner | undefined;
 const listeners = new Set<StepListener>();
 let depth = 0;
+let nextId = 1;
+let current: StepInfo | undefined;
 
 /** Lets a test runner (e.g. the @playwright/test fixtures) report API calls as steps. */
 export function setStepRunner(r: StepRunner | undefined): void {
@@ -30,16 +51,38 @@ export function removeStepListener(l: StepListener): void {
 export async function step<T>(title: string, body: () => Promise<T>): Promise<T> {
   if (depth > 0 || (!runner && listeners.size === 0)) return body();
   ++depth;
+  const info: StepInfo = { id: nextId++, title, startTime: performance.now() };
   const started = Date.now();
+  current = info;
   let error: unknown;
   try {
-    for (const l of listeners) await l.before?.(title);
+    for (const l of [...listeners]) await l.before?.(title, info);
     return runner ? await runner(title, body) : await body();
   } catch (e) {
     error = e;
     throw e;
   } finally {
     --depth;
-    for (const l of [...listeners]) await l.after?.(title, error, Date.now() - started);
+    for (const l of [...listeners]) await l.after?.(title, error, Date.now() - started, info);
+    if (current === info) current = undefined;
   }
+}
+
+/** Whether anything observes input (so callers can skip computing it). */
+export function wantsInput(): boolean {
+  return !!current && [...listeners].some((l) => l.input);
+}
+
+/** Reports that the current call is about to send input (for trace input snapshots). */
+export async function reportInput(input: InputInfo): Promise<void> {
+  const info = current;
+  if (!info) return;
+  for (const l of [...listeners]) await l.input?.(info, input);
+}
+
+/** Adds a line to the current call's log. */
+export function reportLog(message: string): void {
+  const info = current;
+  if (!info) return;
+  for (const l of listeners) l.log?.(info, message);
 }

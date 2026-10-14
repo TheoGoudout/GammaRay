@@ -1224,6 +1224,60 @@ QJsonObject AutomationServer::accessibilityNode(QObject *obj, int depth)
     return node;
 }
 
+QJsonObject AutomationServer::snapshotNode(QObject *obj, int depth, int *budget, const QSet<QObject *> &windows)
+{
+    --*budget;
+    QJsonObject node { { QStringLiteral("handle"), double(m_handles.handleFor(obj)) },
+                       { QStringLiteral("type"), Element::displayTypeName(obj) },
+                       { QStringLiteral("geometry"), rectToJson(Element::globalGeometry(obj)) } };
+    if (!obj->objectName().isEmpty() && !obj->objectName().startsWith(QLatin1String("qt_")))
+        node.insert(QStringLiteral("objectName"), obj->objectName());
+    const QString id = Element::qmlId(obj);
+    if (!id.isEmpty())
+        node.insert(QStringLiteral("id"), id);
+    if (Element::hasText(obj)) {
+        const QString text = Element::text(obj);
+        if (!text.isEmpty())
+            node.insert(QStringLiteral("text"), text.left(500));
+    }
+    const auto acc = Element::accessible(obj);
+    if (acc.valid) {
+        node.insert(QStringLiteral("role"), acc.role);
+        if (!acc.name.isEmpty())
+            node.insert(QStringLiteral("name"), acc.name);
+        if (!acc.description.isEmpty())
+            node.insert(QStringLiteral("description"), acc.description);
+        if (!acc.value.isEmpty())
+            node.insert(QStringLiteral("value"), acc.value);
+        if (acc.checkable || acc.role == QLatin1String("checkbox") || acc.role == QLatin1String("radio"))
+            node.insert(QStringLiteral("checked"), acc.checked);
+        if (acc.disabled)
+            node.insert(QStringLiteral("disabled"), true);
+        if (acc.selected)
+            node.insert(QStringLiteral("selected"), true);
+        if (acc.expandable)
+            node.insert(QStringLiteral("expanded"), acc.expanded);
+        if (acc.level)
+            node.insert(QStringLiteral("level"), acc.level);
+    }
+    QJsonArray children;
+    if (depth < 64) {
+        const auto kids = Element::children(obj);
+        for (QObject *child : kids) {
+            if (*budget <= 0)
+                break;
+            if (!accept(child) || !Element::hasGeometry(child) || !Element::isVisible(child))
+                continue;
+            if (windows.contains(child))
+                continue; // separate windows are separate roots
+            children.push_back(snapshotNode(child, depth + 1, budget, windows));
+        }
+    }
+    if (!children.isEmpty())
+        node.insert(QStringLiteral("children"), children);
+    return node;
+}
+
 #ifdef QT_QML_LIB
 static QJsonValue jsToJson(const QJSValue &v, const ObjectMapper &mapper, int depth = 0)
 {
@@ -1420,10 +1474,26 @@ void AutomationServer::registerExtendedHandlers()
         QBuffer buffer(&data);
         buffer.open(QIODevice::WriteOnly);
         img.save(&buffer, jpeg ? "JPEG" : "PNG", jpeg ? params.value(QStringLiteral("quality")).toInt(80) : -1);
+        const QRectF canvas = recorder.canvas();
         reply->ok(QJsonObject { { QStringLiteral("image"), QString::fromLatin1(data.toBase64()) },
                                 { QStringLiteral("format"), jpeg ? QStringLiteral("jpeg") : QStringLiteral("png") },
                                 { QStringLiteral("width"), img.width() },
-                                { QStringLiteral("height"), img.height() } });
+                                { QStringLiteral("height"), img.height() },
+                                { QStringLiteral("canvas"), rectToJson(canvas) } });
+    };
+
+    // the visible element tree with geometry and accessibility, for trace DOM snapshots
+    h[QStringLiteral("snapshotTree")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
+        int budget = params.value(QStringLiteral("maxNodes")).toInt(5000);
+        QJsonArray windows;
+        const auto tops = Element::topLevelWindows(true);
+        const QSet<QObject *> topSet(tops.cbegin(), tops.cend());
+        QMutexLocker lock(Probe::objectLock());
+        for (QObject *w : tops) {
+            if (accept(w) && budget > 0)
+                windows.push_back(snapshotNode(w, 0, &budget, topSet));
+        }
+        reply->ok(QJsonObject { { QStringLiteral("windows"), windows }, { QStringLiteral("truncated"), budget <= 0 } });
     };
 
     // --- touch ---

@@ -22,6 +22,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QPointer>
+#include <QSet>
 #include <QTimer>
 
 #include <functional>
@@ -94,6 +95,7 @@ private:
     QPointF positionParam(QObject *obj, const QJsonObject &params, const QString &key = QStringLiteral("position")) const;
 
     QJsonObject accessibilityNode(QObject *obj, int depth);
+    QJsonObject snapshotNode(QObject *obj, int depth, int *budget, const QSet<QObject *> &windows);
     QJsonObject codegenLocator(QObject *obj);
     void registerExtendedHandlers();
 

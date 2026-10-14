@@ -74,6 +74,12 @@ public:
     }
 
     /*! One composed frame of all windows, without streaming anything. */
+    /*! The area of the screen captured, in global coordinates. */
+    QRectF canvas() const
+    {
+        return m_canvas;
+    }
+
     QImage snapshot()
     {
         return compose();

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { TimeoutError } from './errors';
+import { reportLog } from './instrumentation';
 
 /** Back-off between retries, like Playwright's. The last value repeats. */
 const POLL_INTERVALS = [0, 20, 50, 100, 100, 250, 500];
@@ -29,7 +30,10 @@ export async function poll<T>(
   for (let i = 0; ; ++i) {
     const result = await attempt();
     if (result.done) return result.value as T;
-    if (result.log && log[log.length - 1] !== result.log) log.push(result.log);
+    if (result.log && log[log.length - 1] !== result.log) {
+      log.push(result.log);
+      reportLog(result.log);
+    }
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
       const details = log.length ? `\nCall log:\n${log.map((l) => `  - ${l}`).join('\n')}` : '';

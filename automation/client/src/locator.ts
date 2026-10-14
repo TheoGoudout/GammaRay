@@ -4,7 +4,7 @@
 import { writeFile } from 'node:fs/promises';
 import type { QtApp } from './app';
 import { ErrorCode, QtError, StrictModeViolationError } from './errors';
-import { step } from './instrumentation';
+import { reportInput, step, wantsInput } from './instrumentation';
 import {
   call,
   labelSelector,
@@ -304,6 +304,18 @@ export class Locator {
         }
 
         if (options.trial) return { done: true, value: undefined as T };
+        if (wantsInput() && req.receivesEvents) {
+          // for traces: where the input goes (the default position is the element's center)
+          const box = (await this.app.connection.call<Actionability>('actionability', { handle, checkHitTarget: false })).geometry;
+          const point = box
+            ? options.position
+              ? { x: box.x + options.position.x, y: box.y + options.position.y }
+              : { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+            : undefined;
+          await reportInput({ handle, point });
+        } else if (wantsInput()) {
+          await reportInput({ handle });
+        }
         try {
           const value = await perform(handle);
           if (this.app.slowMo) await sleep(this.app.slowMo);

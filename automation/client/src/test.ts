@@ -58,10 +58,11 @@ export interface QtOptions {
    */
   qtVideo: VideoMode | ({ mode: VideoMode } & VideoOptions) | undefined;
   /**
-   * Record an HTML trace (actions, errors, screenshots after each action) and attach it.
-   * Defaults to Playwright's own `trace` option.
+   * Record a trace (actions, call logs, errors, screenshots and element snapshots) and attach
+   * it: Playwright's trace.zip, which the HTML report's trace viewer opens, or with
+   * `format: 'html'` a self-contained HTML viewer. Defaults to Playwright's own `trace` option.
    */
-  qtTrace: TraceMode | ({ mode: TraceMode } & TracingStartOptions) | undefined;
+  qtTrace: TraceMode | ({ mode: TraceMode; format?: 'zip' | 'html' } & TracingStartOptions) | undefined;
 }
 
 export const test = base.extend<QtFixtures & QtOptions>({
@@ -86,9 +87,9 @@ export const test = base.extend<QtFixtures & QtOptions>({
       ...launchOptions,
       recordVideo: recordVideo ? { ...videoOptions, dir: testInfo.outputPath('videos') } : launchOptions.recordVideo,
     });
-    const traceSetting = (qtTrace ?? trace) as TraceMode | ({ mode: TraceMode } & TracingStartOptions) | undefined;
-    const { mode: traceMode, ...traceOptions } =
-      typeof traceSetting === 'string' ? { mode: traceSetting } : (traceSetting ?? { mode: 'off' as const });
+    const traceSetting = (qtTrace ?? trace) as QtOptions['qtTrace'];
+    const { mode: traceMode, format: traceFormat, ...traceOptions } =
+      typeof traceSetting === 'string' ? { mode: traceSetting, format: undefined } : (traceSetting ?? { mode: 'off' as const, format: undefined });
     const recordTrace =
       traceMode === 'on' ||
       traceMode === 'retain-on-failure' ||
@@ -114,9 +115,12 @@ export const test = base.extend<QtFixtures & QtOptions>({
       setScreenshotComparator(undefined);
       const failed = testInfo.status !== testInfo.expectedStatus;
       if (app.tracing.isRecording) {
-        const html = await app.tracing.stop().catch(() => undefined);
         const keep = traceMode === 'on' || traceMode === 'on-first-retry' || traceMode === 'on-all-retries' || failed;
-        if (html && keep) await testInfo.attach('trace', { body: html, contentType: 'text/html' });
+        const html = traceFormat === 'html';
+        const path = testInfo.outputPath(html ? 'trace.html' : 'qt-trace.zip');
+        const written = await app.tracing.stop(keep ? { path } : {}).catch(() => undefined);
+        // the HTML report links a "trace" zip attachment to Playwright's trace viewer
+        if (written && keep) await testInfo.attach('trace', { path, contentType: html ? 'text/html' : 'application/zip' });
       }
       if (app.isRunning() && (qtScreenshot === 'on' || (qtScreenshot === 'only-on-failure' && failed))) {
         for (const { window, png } of await app.screenshotAllWindows().catch(() => [])) {
