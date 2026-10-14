@@ -76,7 +76,7 @@ private:
         Automation::ActionRecorder *codegen = nullptr;
     };
 
-    void listen();
+    bool listen();
     void newConnection();
     void textMessageReceived(QWebSocket *socket, const QString &message);
     void socketDisconnected(QWebSocket *socket);

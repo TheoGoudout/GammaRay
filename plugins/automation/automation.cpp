@@ -205,12 +205,13 @@ AutomationServer::AutomationServer(Probe *probe, QObject *parent)
     m_eventFlushTimer.setInterval(0);
     connect(&m_eventFlushTimer, &QTimer::timeout, this, &AutomationServer::flushObjectEvents);
 
+    // inert unless enabled: only an active server follows object creation/destruction
+    if (!listen())
+        return;
     connect(probe, &Probe::objectCreated, this, &AutomationServer::objectCreated);
     connect(probe, &Probe::objectDestroyed, this, &AutomationServer::objectDestroyed);
-
     registerHandlers();
     registerExtendedHandlers();
-    listen();
 }
 
 AutomationServer::~AutomationServer()
@@ -219,7 +220,7 @@ AutomationServer::~AutomationServer()
         QFile::remove(m_portFile);
 }
 
-void AutomationServer::listen()
+bool AutomationServer::listen()
 {
     // opt-in: GAMMARAY_AUTOMATION_PORT=<port|0>, or probe setting AutomationPort
     bool ok = false;
@@ -229,7 +230,7 @@ void AutomationServer::listen()
         ok = port >= 0;
     }
     if (!ok)
-        return;
+        return false;
 
     QString address = qEnvironmentVariable("GAMMARAY_AUTOMATION_ADDRESS");
     if (address.isEmpty())
@@ -241,7 +242,7 @@ void AutomationServer::listen()
     if (!m_server->listen(QHostAddress(address), quint16(port))) {
         std::cerr << "GammaRay automation server failed to listen on " << qPrintable(address) << ':' << port
                   << ": " << qPrintable(m_server->errorString()) << std::endl;
-        return;
+        return false;
     }
 
     const QString url = QStringLiteral("ws://%1:%2").arg(address).arg(m_server->serverPort());
@@ -258,6 +259,7 @@ void AutomationServer::listen()
         f.write(QJsonDocument(info).toJson(QJsonDocument::Compact));
         f.commit();
     }
+    return true;
 }
 
 void AutomationServer::newConnection()
