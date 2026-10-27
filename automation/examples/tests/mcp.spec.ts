@@ -222,7 +222,7 @@ test.describe('connected', () => {
   test.use({ qtApp: { executable: sampleApp, args: ['--widgets-only'] } });
 
   test('connects to a running application: signals, coordinates, tracing and video', async ({ app }, testInfo) => {
-    const context = new McpContext({ outputDir: testInfo.outputPath('mcp'), snapshotAfterAction: false });
+    const context = new McpContext({ outputDir: testInfo.outputPath('mcp'), snapshotAfterAction: false, timeout: 2_000 });
     const server = createMcpServer(context);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -258,6 +258,16 @@ test.describe('connected', () => {
       const trace = await call('qt_stop_tracing', { path: 'trace.zip' });
       expect(existsSync(path.join(testInfo.outputPath('mcp'), 'trace.zip'))).toBe(true);
       expect(trace.text).toContain('npx playwright show-trace');
+
+      // a slot that runs a modal dialog's exec() does not block the agent
+      await call('qt_set_property', { locator: '#widgetsWindow >> #itemList', name: 'currentRow', value: 1 });
+      const invoked = await call('qt_invoke_method', { locator: '#widgetsWindow >> #removeButton', method: 'click' });
+      expect(invoked.isError).toBe(true);
+      expect(invoked.text).toContain('click() has not returned after 2000 ms. If it opened a modal dialog');
+      const dialog = await call('qt_snapshot', { locator: '#confirmDialog' });
+      expect(dialog.text).toContain("Remove 'Banana'?");
+      expect((await call('qt_click', { locator: "locator('#confirmDialog').getByText('Cancel')" })).isError).toBe(false);
+      await expect(app.locator('#confirmDialog')).toBeHidden();
 
       // closing only disconnects from an application that was not launched by the server
       await call('qt_close');

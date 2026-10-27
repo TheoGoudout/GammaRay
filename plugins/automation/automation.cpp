@@ -287,6 +287,39 @@ void AutomationServer::socketDisconnected(QWebSocket *socket)
 
 void AutomationServer::textMessageReceived(QWebSocket *socket, const QString &message)
 {
+    // Requests are handled from a queued call, not from QWebSocket's signal: a handler that
+    // runs application code may enter a nested event loop (a slot calling QDialog::exec()),
+    // and QWebSocket must not process the next frames from inside its own frame handling.
+    // Order is kept: while a handler is in a nested loop, later requests are handled there.
+    auto it = m_sessions.find(socket);
+    if (it == m_sessions.end())
+        return;
+    it->pending.push_back(message);
+    if (it->handlePendingQueued)
+        return;
+    it->handlePendingQueued = true;
+    QMetaObject::invokeMethod(
+        socket, [this, socket]() { handlePending(socket); }, Qt::QueuedConnection);
+}
+
+void AutomationServer::handlePending(QWebSocket *socket)
+{
+    auto it = m_sessions.find(socket);
+    if (it == m_sessions.end())
+        return;
+    it->handlePendingQueued = false;
+    for (;;) {
+        // look the session up again every time: handlers can run event loops
+        it = m_sessions.find(socket);
+        if (it == m_sessions.end() || it->pending.isEmpty())
+            return;
+        const QString message = it->pending.takeFirst();
+        handleMessage(socket, message);
+    }
+}
+
+void AutomationServer::handleMessage(QWebSocket *socket, const QString &message)
+{
     QJsonParseError parseError;
     const auto doc = QJsonDocument::fromJson(message.toUtf8(), &parseError);
     if (doc.isNull() || !doc.isObject()) {

@@ -353,3 +353,13 @@ option preferred. Newest entries go at the bottom.
 - **One application per server**, shared by all MCP sessions of an HTTP server, so a
   reconnecting agent finds its application again. Files are written below `--output-dir`
   only. HTTP checks Host/Origin on loopback and requires a bearer token elsewhere.
+
+## D30. Requests are handled outside QWebSocket's signal
+
+- Found through the MCP server: invoking a slot that runs `QDialog::exec()` broke the
+  connection. The handler ran inside `QWebSocket::textMessageReceived`, and the nested event
+  loop made QWebSocket process the next frames from inside its own frame handling.
+- **Chosen:** received requests are queued per connection and handled from a queued call.
+  Order is unchanged, and while a handler runs a nested event loop, later requests are
+  handled from that loop, as for input actions (D7). The cost is one event loop iteration
+  per batch of requests.

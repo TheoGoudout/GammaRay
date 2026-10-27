@@ -53,6 +53,20 @@ test.describe('widgets list and modal dialog', () => {
     await expect(w.locator('#itemList')).toHaveProperty('count', 3);
   });
 
+  test('a slot that runs the dialog keeps the application scriptable', async ({ app }) => {
+    const w = app.locator('#widgetsWindow');
+    await w.locator('#itemList').setProperty('currentRow', 0);
+    // invoke() returns when the slot does, i.e. after the dialog's exec(); meanwhile the
+    // connection keeps working and drives the dialog
+    const invoked = w.locator('#removeButton').invoke('click');
+    const dialog = w.locator('#confirmDialog');
+    await expect(dialog).toBeVisible();
+    await dialog.getByText('OK').click();
+    await invoked;
+    await expect(dialog).toBeHidden();
+    await expect(w.locator('#itemList')).toHaveProperty('count', 2);
+  });
+
   test('escape closes the dialog', async ({ app }) => {
     const w = app.locator('#widgetsWindow');
     await w.locator('#itemList').setProperty('currentRow', 0);

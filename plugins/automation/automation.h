@@ -24,6 +24,7 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QSet>
+#include <QStringList>
 #include <QTimer>
 
 #include <functional>
@@ -74,11 +75,16 @@ private:
         QHash<qint64, Spy> spies;
         QHash<quint32, Automation::Recorder *> recorders;
         Automation::ActionRecorder *codegen = nullptr;
+        /** Received requests not handled yet (see textMessageReceived()). */
+        QStringList pending;
+        bool handlePendingQueued = false;
     };
 
     bool listen();
     void newConnection();
     void textMessageReceived(QWebSocket *socket, const QString &message);
+    void handlePending(QWebSocket *socket);
+    void handleMessage(QWebSocket *socket, const QString &message);
     void socketDisconnected(QWebSocket *socket);
     void registerHandlers();
 

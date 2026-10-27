@@ -726,10 +726,10 @@ later requests are served from the nested event loop.
 - **Not covered:** QGraphicsView items, Qt 3D, Qt WebEngine content, native platform
   dialogs and menus. QQuickWidget content is supported but less tested. Widget drag and
   drop through `QDrag` is untested.
-- `invoke()` and `evaluate()` are synchronous: calling something that runs `exec()`
-  only returns when the dialog closes. Click the button that opens it instead.
-  `evaluate` runs in Qt's JavaScript engine (ECMAScript 2017+), which has no DOM, and
-  returned promises are not awaited.
+- `invoke()` and `evaluate()` return when the call returns: for something that runs
+  `exec()`, once the dialog closes. Don't await them before driving the dialog (or
+  click the button that opens it instead). `evaluate` runs in Qt's JavaScript engine
+  (ECMAScript 2017+), which has no DOM, and returned promises are not awaited.
 - **Accessibility** is activated in the application on the first role/label query.
   Qt Quick only keeps accessible names and states up to date while a screen reader
   bridge is connected, so qt-playwright falls back to `Accessible.*` properties, text,
