@@ -362,6 +362,10 @@ bool AutomationServer::accept(QObject *obj) const
     if (qobject_cast<ViewItem *>(obj))
         return true;
 #endif
+    // the model data of Qt Quick delegates (QQmlDMAbstractItemModelData...) is not UI, but has
+    // the model's roles as properties: text="..." would match it next to the delegate
+    if (obj->inherits("QQmlDelegateModelItem"))
+        return false;
     return obj->thread() == thread() && m_probe->isValidObject(obj);
 }
 
