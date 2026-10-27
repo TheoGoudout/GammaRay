@@ -17,6 +17,9 @@ test.describe('QML list and modal dialog', () => {
     await win.locator('#addButton').click();
     await expect(todos).toHaveCount(4);
     await expect(todos.last()).toHaveText('Review');
+    // only the delegate has the text, not the delegate's model data object behind it
+    await expect(app.getByText('Review')).toHaveCount(1);
+    await app.getByText('Review').click();
 
     expect(await win.invoke('addTodo', 'From JS')).toBe(5);
     await expect(win.locator('#todoList').getByText('From JS')).toBeVisible();

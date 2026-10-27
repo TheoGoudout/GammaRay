@@ -6,6 +6,7 @@
         "test": "playwright test"
     },
     "devDependencies": {
+        "@modelcontextprotocol/sdk": "^1.32.2",
         "@playwright/test": "^1.56.1",
         "@types/node": "^22.20.0",
         "qt-playwright": "file:../client"

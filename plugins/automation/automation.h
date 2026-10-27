@@ -24,6 +24,7 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QSet>
+#include <QStringList>
 #include <QTimer>
 
 #include <functional>
@@ -74,11 +75,16 @@ private:
         QHash<qint64, Spy> spies;
         QHash<quint32, Automation::Recorder *> recorders;
         Automation::ActionRecorder *codegen = nullptr;
+        /** Received requests not handled yet (see textMessageReceived()). */
+        QStringList pending;
+        bool handlePendingQueued = false;
     };
 
     bool listen();
     void newConnection();
     void textMessageReceived(QWebSocket *socket, const QString &message);
+    void handlePending(QWebSocket *socket);
+    void handleMessage(QWebSocket *socket, const QString &message);
     void socketDisconnected(QWebSocket *socket);
     void registerHandlers();
 
@@ -95,7 +101,7 @@ private:
     QVector<QObject *> allObjects() const;
     QPointF positionParam(QObject *obj, const QJsonObject &params, const QString &key = QStringLiteral("position")) const;
 
-    QJsonObject accessibilityNode(QObject *obj, int depth);
+    QJsonObject accessibilityNode(QObject *obj, int depth, bool refs);
     QJsonObject snapshotNode(QObject *obj, int depth, int *budget, const QSet<QObject *> &windows);
     QJsonObject codegenLocator(QObject *obj);
     void registerExtendedHandlers();

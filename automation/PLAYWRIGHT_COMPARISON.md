@@ -8,8 +8,9 @@ screenshot baselines and `toHaveCSS` included). It also has `evaluate`,
 coordinate-level input, dialogs and file choosers, video, traces that Playwright's own
 trace viewer opens, an inspector, and codegen. Some features are adapted rather than
 identical, because Qt has no DOM, no CSS and no page JavaScript. Playwright's UI mode
-and trace viewer work as they are. What remains missing is tied to browsers (network
-interception, clock control, browser contexts and storage).
+and trace viewer work as they are, and `qt-playwright mcp` is the counterpart of Playwright
+MCP for AI agents. What remains missing is tied to browsers (network interception, clock
+control, browser contexts and storage).
 
 Legend: ✅ same name and semantics · ≈ same idea, adapted to Qt · ❌ missing ·
 ➕ qt-playwright only.
@@ -117,6 +118,26 @@ Legend: ✅ same name and semantics · ≈ same idea, adapted to Qt · ❌ missi
 | Inspector | web inspector: live view, pick locator, locator playground with highlights, resume / step over, recording; `qt-playwright inspect <app>` | ≈ |
 | UI mode | Playwright's own (`npx playwright test --ui`) | ✅ |
 | VS Code extension | runs tests through `@playwright/test` like any project; untested | ≈ |
+
+## MCP server (Playwright MCP)
+
+| Playwright MCP | `qt-playwright mcp` | |
+|---|---|---|
+| setup instructions per client | `qt-playwright mcp install <agent>` writes the configuration of Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex or Gemini CLI | ➕ |
+| stdio, `--port` (Streamable HTTP), `--host` | same; ➕ `--token` (bearer token, generated for non-loopback hosts) | ✅ |
+| `browser_snapshot`: ARIA snapshot with `[ref=eN]` | `qt_snapshot`: all windows (or one element); refs are element handles, never reused | ✅ |
+| `browser_click`, `browser_hover`, `browser_type` (`submit`, `slowly`), `browser_press_key`, `browser_select_option`, `browser_drag`, `browser_file_upload`, `browser_handle_dialog`, `browser_wait_for` | `qt_click`, `qt_hover`, `qt_type`, `qt_press_key`, `qt_select_option`, `qt_drag`, `qt_file_upload`, `qt_handle_dialog`, `qt_wait_for` (on refs or locator expressions) | ✅ |
+| fresh snapshot and generated code in action results | same (`--no-snapshot` turns the snapshot off) | ✅ |
+| `browser_take_screenshot` | `qt_screenshot`: all windows composed, or one element | ✅ |
+| `browser_evaluate` | `qt_evaluate` in Qt's JavaScript engine | ≈ |
+| `browser_console_messages` | the application's new stdout/stderr in every result, `qt_status` | ≈ |
+| `browser_mouse_click_xy` (vision) | `qt_mouse_click_xy` in screen coordinates | ✅ |
+| `browser_verify_*` (testing) | `qt_expect`: any retrying assertion, e.g. `toHaveText`, `toBeChecked`, `toHaveProperty` | ✅ |
+| `browser_generate_locator` | `qt_inspect` (also types, geometry and all Qt properties), `qt_find` | ✅ |
+| `browser_start_tracing` / `browser_stop_tracing` | `qt_start_tracing` / `qt_stop_tracing` (Playwright's trace.zip) | ✅ |
+| `--save-video` | `qt_start_video` / `qt_stop_video` | ≈ |
+| `browser_navigate`, `browser_navigate_back`, `browser_tabs`, `browser_resize`, `browser_network_requests`, `browser_pdf_save` | not applicable (windows are all in the snapshot; resize with `qt_set_property`) | ❌ |
+| — | ➕ `qt_launch` (also on another machine), `qt_connect` (device port), `qt_attach` (pid), `qt_set_property`, `qt_invoke_method`, `qt_spy_signal` / `qt_signal_emissions`, `qt_highlight`, `qt_generate_test` | ➕ |
 
 ## Remaining gaps
 

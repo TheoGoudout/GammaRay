@@ -5,7 +5,7 @@ export { QtApp, type AppInfo } from './app';
 export { CodeRecorder, renderAction, type RecordedAction, type RecordedLocator } from './codegen';
 export { Connection } from './connection';
 export { ConnectionClosedError, ErrorCode, QtError, StrictModeViolationError, TimeoutError } from './errors';
-export { renderAriaSnapshot, matchesAriaTemplate, parseAriaTemplate, type AriaNode } from './aria';
+export { handleForRef, refForHandle, renderAriaSnapshot, matchesAriaTemplate, parseAriaTemplate, type AriaNode, type RenderAriaOptions } from './aria';
 export { Dialog, FileChooser } from './dialogs';
 export {
   AppAssertions,
@@ -21,6 +21,7 @@ export { Keyboard, Mouse, Touchscreen } from './input';
 export { addStepListener, removeStepListener, setStepRunner, type StepListener } from './instrumentation';
 export { attach, connect, DEFAULT_DISABLED_PLUGINS, launch, type AttachOptions, type LaunchOptions } from './launcher';
 export { Locator, type FilterOptions } from './locator';
+export { isLocatorExpression, LocatorExpressionError, parseLocator } from './locatorexpr';
 export { quote, roleSelector, textSelector, type AriaRole, type ByRoleOptions } from './selectors';
 export { Inspector, type InspectorOptions } from './inspector';
 export { Tracing, type TracingStartOptions, type TracingStopOptions } from './tracing';

@@ -25,6 +25,19 @@ export interface RecordedAction {
 
 const str = (s: string) => `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n')}'`;
 
+/** A complete @playwright/test file running @p lines (statements using the `app` fixture). */
+export function renderTestFile(lines: string[], testName = 'recorded', header: string[] = []): string {
+  return [
+    ...header,
+    "import { expect, test } from 'qt-playwright/test';",
+    '',
+    `test(${str(testName)}, async ({ app }) => {`,
+    ...lines.map((l) => `  ${l}`),
+    '});',
+    '',
+  ].join('\n');
+}
+
 /** One line of test code for @p a. */
 export function renderAction(a: RecordedAction): string {
   const t = a.target.code;
@@ -95,17 +108,7 @@ export class CodeRecorder {
 
   /** A complete @playwright/test file with the recorded steps. */
   code(options: { testName?: string } = {}): string {
-    const body = this.lines()
-      .map((l) => `  ${l}`)
-      .join('\n');
-    return [
-      "import { expect, test } from 'qt-playwright/test';",
-      '',
-      `test(${str(options.testName ?? 'recorded')}, async ({ app }) => {`,
-      body,
-      '});',
-      '',
-    ].join('\n');
+    return renderTestFile(this.lines(), options.testName);
   }
 
   /** Stops recording (pending typing is flushed) and returns the test file. */

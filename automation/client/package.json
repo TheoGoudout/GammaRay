@@ -1,7 +1,7 @@
 {
     "name": "qt-playwright",
-    "version": "0.1.0",
-    "description": "Playwright-style end-to-end testing for Qt (Widgets and Qt Quick) applications, powered by GammaRay",
+    "version": "0.2.0",
+    "description": "Playwright-style end-to-end testing and an MCP server for AI agents for Qt (Widgets and Qt Quick) applications, powered by GammaRay",
     "license": "GPL-2.0-or-later",
     "main": "dist/index.js",
     "bin": {
@@ -16,6 +16,10 @@
         "./test": {
             "types": "./dist/test.d.ts",
             "default": "./dist/test.js"
+        },
+        "./mcp": {
+            "types": "./dist/mcp.d.ts",
+            "default": "./dist/mcp.js"
         }
     },
     "files": [
@@ -32,7 +36,9 @@
         "node": ">=18"
     },
     "dependencies": {
-        "ws": "^8.18.0"
+        "@modelcontextprotocol/sdk": "^1.32.2",
+        "ws": "^8.18.0",
+        "zod": "^4.6.7"
     },
     "peerDependencies": {
         "@playwright/test": ">=1.40"

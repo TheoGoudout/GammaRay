@@ -8,7 +8,8 @@ import type { AddressInfo } from 'node:net';
 import type { QtApp } from './app';
 import { renderAction, type CodeRecorder } from './codegen';
 import { addStepListener, removeStepListener, type StepInfo, type StepListener } from './instrumentation';
-import { Locator } from './locator';
+import type { Locator } from './locator';
+import { parseLocator } from './locatorexpr';
 
 export interface InspectorOptions {
   /** Port of the local web server (default: any free port). */
@@ -193,14 +194,13 @@ export class Inspector {
       }
       case 'api/locate': {
         const expression = String(body.expression ?? '').trim();
-        let locator: unknown;
+        let locator: Locator;
         try {
           // the same expressions as in a test: getByRole('button', { name: 'OK' }).first() ...
-          locator = new Function('app', `return (app.${expression.replace(/^app\./, '')});`)(app);
+          locator = parseLocator(app, expression);
         } catch (e) {
           return send(res, 200, { error: String((e as Error).message) });
         }
-        if (!(locator instanceof Locator)) return send(res, 200, { error: 'the expression is not a locator' });
         try {
           const elements = await locator.elements();
           const boxes = [];
