@@ -123,6 +123,7 @@ Legend: ✅ same name and semantics · ≈ same idea, adapted to Qt · ❌ missi
 
 | Playwright MCP | `qt-playwright mcp` | |
 |---|---|---|
+| setup instructions per client | `qt-playwright mcp install <agent>` writes the configuration of Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex or Gemini CLI | ➕ |
 | stdio, `--port` (Streamable HTTP), `--host` | same; ➕ `--token` (bearer token, generated for non-loopback hosts) | ✅ |
 | `browser_snapshot`: ARIA snapshot with `[ref=eN]` | `qt_snapshot`: all windows (or one element); refs are element handles, never reused | ✅ |
 | `browser_click`, `browser_hover`, `browser_type` (`submit`, `slowly`), `browser_press_key`, `browser_select_option`, `browser_drag`, `browser_file_upload`, `browser_handle_dialog`, `browser_wait_for` | `qt_click`, `qt_hover`, `qt_type`, `qt_press_key`, `qt_select_option`, `qt_drag`, `qt_file_upload`, `qt_handle_dialog`, `qt_wait_for` (on refs or locator expressions) | ✅ |

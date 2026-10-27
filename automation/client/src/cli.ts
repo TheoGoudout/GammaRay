@@ -7,11 +7,13 @@
 //   qt-playwright inspect [--port <port>] [--gammaray <path>] [--headless] <app> [app args...]
 //   qt-playwright server [--host <addr>] [--port <port>] [--token <token>] [--app <path>]...
 //   qt-playwright mcp [--app <path>]... [--remote <url>] [--connect <host:port>] [--port <port>] ...
+//   qt-playwright mcp install <agent> [--scope project|user|local] [--name <name>] [--print] [mcp options]
 
 import { writeFileSync } from 'node:fs';
 import { renderAction } from './codegen';
 import { launch } from './launcher';
 import type { RunMcpServerOptions } from './mcp';
+import { agents, install, parseInstallArgs, parseMcpArgs, UsageError } from './mcpinstall';
 import { runServer, type ServerOptions } from './remote';
 
 function usage(): never {
@@ -21,6 +23,7 @@ function usage(): never {
       '       qt-playwright inspect [options] <application> [arguments...]',
       '       qt-playwright server [options]',
       '       qt-playwright mcp [options]',
+      '       qt-playwright mcp install <agent> [install options] [mcp options]',
       '',
       'codegen  launches the application under GammaRay and records your interactions as a',
       '         qt-playwright test. Close the application (or press Ctrl+C) to finish.',
@@ -61,6 +64,14 @@ function usage(): never {
       '  --host <addr>         HTTP interface (default 127.0.0.1)',
       '  --token <token>       HTTP bearer token (default $QTPW_MCP_TOKEN; random if --host is not loopback)',
       '  --gammaray <path>     the gammaray launcher',
+      '',
+      'mcp install registers the MCP server (started with the mcp options given) with a coding',
+      'agent: claude-code, claude-desktop, cursor, vscode, windsurf, codex, gemini.',
+      '  --scope <scope>       project (the agent\'s file in --dir), user, or local (Claude Code)',
+      '  --name <name>         name of the server in the agent (default qt)',
+      '  --dir <dir>           project directory (default: the current directory)',
+      '  --print               only print the configuration',
+      '  e.g. qt-playwright mcp install claude-code --app ./build/myapp',
       '',
     ].join('\n'),
   );
@@ -157,42 +168,37 @@ async function server(argv: string[]): Promise<void> {
 }
 
 async function mcp(argv: string[]): Promise<void> {
+  if (argv[0] === 'install') return mcpInstall(argv.slice(1));
+  let options: RunMcpServerOptions;
+  try {
+    options = parseMcpArgs(argv).options;
+  } catch (e) {
+    if (e instanceof UsageError) process.stderr.write(`qt-playwright mcp: ${e.message}\n\n`);
+    usage();
+  }
   // the MCP server must not pause in the inspector (QTPW_DEBUG) or print on stdout
   delete process.env.QTPW_DEBUG;
   const { runMcpServer } = await import('./mcp');
-  const options: RunMcpServerOptions = { apps: [] };
-  let remote: string | undefined;
-  let remoteToken: string | undefined;
-  const value = (opt: string) => {
-    const v = argv.shift();
-    if (v === undefined) usage();
-    return v;
-  };
-  while (argv.length) {
-    const opt = argv.shift()!;
-    if (opt === '--app') options.apps!.push(value(opt));
-    else if (opt === '--args') options.args = value(opt).split(' ').filter(Boolean);
-    else if (opt === '--remote') remote = value(opt);
-    else if (opt === '--remote-token') remoteToken = value(opt);
-    else if (opt === '--connect') options.connect = value(opt);
-    else if (opt === '--headless') options.headless = true;
-    else if (opt === '--timeout') options.timeout = Number(value(opt));
-    else if (opt === '--output-dir') options.outputDir = value(opt);
-    else if (opt === '--no-snapshot') options.snapshotAfterAction = false;
-    else if (opt === '--port') options.port = Number(value(opt));
-    else if (opt === '--host') options.host = value(opt);
-    else if (opt === '--token') options.token = value(opt);
-    else if (opt === '--gammaray') options.gammaray = value(opt);
-    else usage();
-  }
-  if (!options.apps!.length) options.apps = undefined;
-  if (remote) options.remote = { url: remote, token: remoteToken };
   const running = await runMcpServer(options);
   if (running.url) process.stderr.write(`qt-playwright MCP server listening on ${running.url}\n`);
   // terminates launched applications
   const stop = () => void running.close().then(() => process.exit(0));
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
+}
+
+async function mcpInstall(argv: string[]): Promise<void> {
+  try {
+    const { serverArgv, ...options } = parseInstallArgs(argv);
+    const result = install({ ...options, serverArgs: parseMcpArgs(serverArgv).argv });
+    (options.print ? process.stdout : process.stderr).write(`${result.message}\n`);
+  } catch (e) {
+    if (!(e instanceof UsageError)) throw e;
+    process.stderr.write(`qt-playwright mcp install: ${e.message}\n\nAgents:\n`);
+    for (const a of agents())
+      process.stderr.write(`  ${a.id.padEnd(15)}${a.name}, --scope ${a.scopes.join(' | ')}${a.aliases.length ? ` (also: ${a.aliases.join(', ')})` : ''}\n`);
+    process.exit(2);
+  }
 }
 
 const [command, ...rest] = process.argv.slice(2);

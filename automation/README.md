@@ -543,24 +543,36 @@ counterpart of [Playwright MCP](https://github.com/microsoft/playwright-mcp). An
 operate it like a user, check its state while doing so, and turn the session into a
 test. The application can run on the same machine or on another one.
 
-Register it with your agent. The client is not on npm yet, so point the agent at the CLI
-of your checkout (after `npm ci` in `automation/client`):
+### Installing it in your agent
+
+One command registers the server with a coding agent. Run it from a checkout (after
+`npm ci` in `automation/client`) or a project where qt-playwright is installed, inside the
+project directory, with the options the server should start with:
 
 ```sh
-claude mcp add qt -- node /path/to/GammaRay/automation/client/dist/cli.js mcp --app /path/to/myapp
+cd my-project
+QT_PLAYWRIGHT_GAMMARAY=/path/to/GammaRay/build/bin/gammaray \
+  node /path/to/GammaRay/automation/client/dist/cli.js mcp install claude-code --app ./build/myapp
+# or, with qt-playwright in the project's node_modules:
+npx qt-playwright mcp install cursor --app ./build/myapp --headless
 ```
 
-```json
-{
-  "mcpServers": {
-    "qt": {
-      "command": "node",
-      "args": ["/path/to/GammaRay/automation/client/dist/cli.js", "mcp", "--app", "/path/to/myapp"],
-      "env": { "QT_PLAYWRIGHT_GAMMARAY": "/path/to/GammaRay/build/bin/gammaray" }
-    }
-  }
-}
-```
+| Agent | `<agent>` | Writes (`--scope`, default first) |
+|-|-|-|
+| Claude Code | `claude-code` | `project`: `.mcp.json`; `user` / `local`: through `claude mcp add` |
+| Claude Desktop | `claude-desktop` | `user`: `claude_desktop_config.json` (restart the app) |
+| Cursor | `cursor` | `project`: `.cursor/mcp.json`; `user`: `~/.cursor/mcp.json` |
+| VS Code (Copilot) | `vscode` | `project`: `.vscode/mcp.json`; `user`: the profile's `mcp.json` |
+| Windsurf | `windsurf` | `user`: `~/.codeium/windsurf/mcp_config.json` |
+| OpenAI Codex CLI | `codex` | `user`: `~/.codex/config.toml` |
+| Gemini CLI | `gemini` | `project`: `.gemini/settings.json`; `user`: `~/.gemini/settings.json` |
+
+The entry starts this Node.js with this package's `cli.js` and absolute paths (`--app`,
+`--output-dir` and the `gammaray` launcher from `$QT_PLAYWRIGHT_GAMMARAY` or the `PATH`).
+It works from any directory, without a package on npm. Existing settings and other
+servers in the file are kept, and an entry of the same name (`--name`, default `qt`) is
+replaced. `--print` shows the configuration instead of writing it, for other agents or
+for review. All server options (below) can follow, e.g. `--remote` for a device.
 
 With `--app`, the first tool call that needs the application starts it. Only the listed
 executables can be launched (`--args "..."` passes arguments). Without `--app`, the agent

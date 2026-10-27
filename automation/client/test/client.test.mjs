@@ -5,12 +5,18 @@
 // Run with: npm test (after npm run build)
 
 import assert from 'node:assert/strict';
-import {mkdtempSync,
-        rmSync} from 'node:fs';
+import {existsSync,
+        mkdirSync,
+        mkdtempSync,
+        readFileSync,
+        rmSync,
+        writeFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname,
+        join} from 'node:path';
 import {test} from 'node:test';
+import {fileURLToPath} from 'node:url';
 import {WebSocketServer} from 'ws';
 
 const require = createRequire(import.meta.url);
@@ -290,4 +296,98 @@ test('MCP helpers: code literals and new output', () => {
     assert.equal(newOutput('a'.repeat(300) + 'TAIL', 'a'.repeat(250) + 'TAIL' +
                                                          'new'),
                  'new');
+});
+
+test('mcp install: options, agents and their configuration files', () => {
+    const {parseMcpArgs, parseInstallArgs, install, updatedConfig, UsageError} = require('../dist/mcpinstall.js');
+    // paths become absolute (except executables on a remote server)
+    assert.deepEqual(parseMcpArgs([ '--app', 'build/app', '--headless', '--output-dir', 'out' ], '/work').argv,
+                     [ '--headless', '--output-dir', '/work/out', '--app', '/work/build/app' ]);
+    assert.deepEqual(parseMcpArgs([ '--remote', 'ws://dev:9900', '--app', 'bin/app' ], '/work').argv, [ '--remote', 'ws://dev:9900', '--app', 'bin/app' ]);
+    assert.throws(() => parseMcpArgs([ '--ap', 'x' ]), UsageError);
+    assert.throws(() => parseMcpArgs([ '--timeout', 'soon' ]), UsageError);
+    const parsed = parseInstallArgs([ 'claude', '--scope', 'user', '--app', '/a', '--name', 'myapp', '--print' ]);
+    assert.equal(parsed.agent, 'claude');
+    assert.equal(parsed.scope, 'user');
+    assert.equal(parsed.name, 'myapp');
+    assert.deepEqual(parsed.serverArgv, [ '--app', '/a' ]);
+
+    const dir = mkdtempSync(join(tmpdir(), 'qtpw-install-test-'));
+    const base = {node : '/usr/bin/node', cli : '/qtpw/cli.js', serverArgs : [ '--app', '/opt/app' ]};
+    const environment = {dir : join(dir, 'proj'), home : join(dir, 'home'), platform : 'linux', env : {PATH : '', QT_PLAYWRIGHT_GAMMARAY : '/gr/bin/gammaray'}};
+    const expectedArgs = [ '/qtpw/cli.js', 'mcp', '--app', '/opt/app', '--gammaray', '/gr/bin/gammaray' ];
+    try {
+        const files = {
+            'claude-code' : join(dir, 'proj', '.mcp.json'),
+            'claude-desktop' : join(dir, 'home', '.config', 'Claude', 'claude_desktop_config.json'),
+            cursor : join(dir, 'proj', '.cursor', 'mcp.json'),
+            vscode : join(dir, 'proj', '.vscode', 'mcp.json'),
+            windsurf : join(dir, 'home', '.codeium', 'windsurf', 'mcp_config.json'),
+            gemini : join(dir, 'proj', '.gemini', 'settings.json'),
+        };
+        for (const [agent, file] of Object.entries(files)) {
+            const r = install({...base, agent, environment});
+            assert.equal(r.file, file, agent);
+            const json = JSON.parse(readFileSync(file, 'utf8'));
+            const entry = agent === 'vscode' ? json.servers.qt : json.mcpServers.qt;
+            assert.deepEqual(entry, {...(agent === 'vscode' ? {type : 'stdio'} : {}), command : '/usr/bin/node', args : expectedArgs}, agent);
+        }
+        // other servers and settings are kept; the entry is replaced
+        writeFileSync(files.cursor, JSON.stringify({mcpServers : {other : {command : 'x'}, qt : {command : 'old'}}, theme : 'dark'}));
+        install({...base, agent : 'cursor', environment});
+        const cursor = JSON.parse(readFileSync(files.cursor, 'utf8'));
+        assert.deepEqual(Object.keys(cursor.mcpServers), [ 'other', 'qt' ]);
+        assert.equal(cursor.theme, 'dark');
+        assert.equal(cursor.mcpServers.qt.command, '/usr/bin/node');
+        // user scope, --print does not write
+        const printed = install({...base, agent : 'cursor', scope : 'user', print : true, environment});
+        assert.equal(printed.file, join(dir, 'home', '.cursor', 'mcp.json'));
+        assert.ok(!existsSync(printed.file));
+        assert.throws(() => install({...base, agent : 'windsurf', scope : 'project', environment}), /supports --scope user/);
+        assert.throws(() => install({...base, agent : 'emacs', environment}), /unknown agent/);
+        writeFileSync(files.gemini, '{ broken');
+        assert.throws(() => install({...base, agent : 'gemini', environment}), /cannot parse the existing file/);
+
+        // Codex: TOML table appended, then replaced in place (sub-tables included)
+        const codex = join(dir, 'home', '.codex', 'config.toml');
+        mkdirSync(dirname(codex), {recursive : true});
+        writeFileSync(codex, 'model = "o4"\n\n[mcp_servers.qt]\ncommand = "old"\n\n[mcp_servers.qt.env]\nA = "1"\n\n[mcp_servers.other]\ncommand = "y"\n');
+        install({...base, agent : 'codex', environment});
+        assert.equal(readFileSync(codex, 'utf8'), [
+            'model = "o4"', '', '[mcp_servers.qt]', 'command = "/usr/bin/node"',
+            `args = [${expectedArgs.map((a) => JSON.stringify(a)).join(', ')}]`, '', '[mcp_servers.other]', 'command = "y"', ''
+        ].join('\n'));
+        assert.equal(updatedConfig('codex', '', 'qt', {command : 'n', args : []}), '[mcp_servers.qt]\ncommand = "n"\nargs = []\n');
+
+        // Claude Code user scope goes through `claude mcp add`
+        const calls = [];
+        const r = install({...base, agent : 'claude-code', scope : 'user', environment, run : (c, a) => (calls.push([ c, ...a ]), {status : 0})});
+        assert.deepEqual(calls[1], [ 'claude', 'mcp', 'add', '--scope', 'user', 'qt', '--', '/usr/bin/node', ...expectedArgs ]);
+        assert.match(r.message, /Added "qt" to Claude Code \(user scope\)/);
+        assert.match(install({...base, agent : 'claude', scope : 'local', print : true, environment}).content,
+                     /^claude mcp add --scope local qt -- \/usr\/bin\/node \/qtpw\/cli\.js mcp --app \/opt\/app/);
+        // without gammaray, a warning
+        assert.match(install({...base, agent : 'cursor', environment : {...environment, env : {PATH : ''}}}).message, /gammaray was not found/);
+    } finally {
+        rmSync(dir, {recursive : true, force : true});
+    }
+});
+
+test('mcp install: command line', () => {
+    const {spawnSync} = require('node:child_process');
+    const dir = mkdtempSync(join(tmpdir(), 'qtpw-install-cli-'));
+    const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+    const env = {...process.env, QT_PLAYWRIGHT_GAMMARAY : '/gr/gammaray'};
+    try {
+        const r = spawnSync(process.execPath, [ cli, 'mcp', 'install', 'cursor', '--dir', dir, '--app', 'app', '--headless' ], {encoding : 'utf8', env, cwd : dir});
+        assert.equal(r.status, 0, r.stderr);
+        assert.match(r.stderr, /Created .*\.cursor\/mcp\.json with the MCP server "qt"/);
+        const entry = JSON.parse(readFileSync(join(dir, '.cursor', 'mcp.json'), 'utf8')).mcpServers.qt;
+        assert.deepEqual(entry.args, [ cli, 'mcp', '--headless', '--app', join(dir, 'app'), '--gammaray', '/gr/gammaray' ]);
+        const bad = spawnSync(process.execPath, [ cli, 'mcp', 'install', 'cursor', '--bogus' ], {encoding : 'utf8', env});
+        assert.equal(bad.status, 2);
+        assert.match(bad.stderr, /unknown option --bogus[\s\S]*claude-code/);
+    } finally {
+        rmSync(dir, {recursive : true, force : true});
+    }
 });
