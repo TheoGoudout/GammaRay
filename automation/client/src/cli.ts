@@ -6,10 +6,12 @@
 //   qt-playwright codegen [--output <file>] [--gammaray <path>] [--headless] <app> [app args...]
 //   qt-playwright inspect [--port <port>] [--gammaray <path>] [--headless] <app> [app args...]
 //   qt-playwright server [--host <addr>] [--port <port>] [--token <token>] [--app <path>]...
+//   qt-playwright mcp [--app <path>]... [--remote <url>] [--connect <host:port>] [--port <port>] ...
 
 import { writeFileSync } from 'node:fs';
 import { renderAction } from './codegen';
 import { launch } from './launcher';
+import type { RunMcpServerOptions } from './mcp';
 import { runServer, type ServerOptions } from './remote';
 
 function usage(): never {
@@ -18,6 +20,7 @@ function usage(): never {
       'Usage: qt-playwright codegen [options] <application> [arguments...]',
       '       qt-playwright inspect [options] <application> [arguments...]',
       '       qt-playwright server [options]',
+      '       qt-playwright mcp [options]',
       '',
       'codegen  launches the application under GammaRay and records your interactions as a',
       '         qt-playwright test. Close the application (or press Ctrl+C) to finish.',
@@ -27,6 +30,9 @@ function usage(): never {
       'server   launches applications for tests running on another machine',
       "         (launch(app, args, { remote: 'host:port' }) or qtApp.remote) and relays",
       '         their automation connection. Clients must send the token.',
+      'mcp      runs an MCP server (stdio, or HTTP with --port) that lets AI agents explore and',
+      '         test the application live: snapshots with element refs, actions, assertions,',
+      '         screenshots, and generating tests from what the agent did.',
       '',
       'Options:',
       '  -o, --output <file>   codegen: write the test to <file> instead of stdout',
@@ -39,6 +45,22 @@ function usage(): never {
       '  --port <port>         server: port (default 9900)',
       '  --token <token>       server: required token (default $QTPW_SERVER_TOKEN, else random)',
       '  --app <path>          server: only launch this executable (repeatable)',
+      '',
+      'mcp options:',
+      '  --app <path>          only launch this executable (repeatable); the first one is launched',
+      '                        automatically by the first tool that needs an application',
+      '  --args <args>         arguments for that automatic launch (one string, split at spaces)',
+      '  --remote <url>        launch through the `qt-playwright server` at <url> (ws://host:port)',
+      '  --remote-token <tok>  token of that server (default $QTPW_SERVER_TOKEN)',
+      '  --connect <host:port> connect to this automation server instead of launching',
+      '  --headless            launch without a display',
+      '  --timeout <ms>        timeout of actions and assertions (default 5000)',
+      '  --output-dir <dir>    where screenshots, traces, videos and tests are saved (default: temp dir)',
+      '  --no-snapshot         do not include a snapshot in the result of every action',
+      '  --port <port>         serve Streamable HTTP on <port> (endpoint /mcp) instead of stdio',
+      '  --host <addr>         HTTP interface (default 127.0.0.1)',
+      '  --token <token>       HTTP bearer token (default $QTPW_MCP_TOKEN; random if --host is not loopback)',
+      '  --gammaray <path>     the gammaray launcher',
       '',
     ].join('\n'),
   );
@@ -134,8 +156,47 @@ async function server(argv: string[]): Promise<void> {
   process.once('SIGTERM', () => void running.close().then(() => process.exit(0)));
 }
 
+async function mcp(argv: string[]): Promise<void> {
+  // the MCP server must not pause in the inspector (QTPW_DEBUG) or print on stdout
+  delete process.env.QTPW_DEBUG;
+  const { runMcpServer } = await import('./mcp');
+  const options: RunMcpServerOptions = { apps: [] };
+  let remote: string | undefined;
+  let remoteToken: string | undefined;
+  const value = (opt: string) => {
+    const v = argv.shift();
+    if (v === undefined) usage();
+    return v;
+  };
+  while (argv.length) {
+    const opt = argv.shift()!;
+    if (opt === '--app') options.apps!.push(value(opt));
+    else if (opt === '--args') options.args = value(opt).split(' ').filter(Boolean);
+    else if (opt === '--remote') remote = value(opt);
+    else if (opt === '--remote-token') remoteToken = value(opt);
+    else if (opt === '--connect') options.connect = value(opt);
+    else if (opt === '--headless') options.headless = true;
+    else if (opt === '--timeout') options.timeout = Number(value(opt));
+    else if (opt === '--output-dir') options.outputDir = value(opt);
+    else if (opt === '--no-snapshot') options.snapshotAfterAction = false;
+    else if (opt === '--port') options.port = Number(value(opt));
+    else if (opt === '--host') options.host = value(opt);
+    else if (opt === '--token') options.token = value(opt);
+    else if (opt === '--gammaray') options.gammaray = value(opt);
+    else usage();
+  }
+  if (!options.apps!.length) options.apps = undefined;
+  if (remote) options.remote = { url: remote, token: remoteToken };
+  const running = await runMcpServer(options);
+  if (running.url) process.stderr.write(`qt-playwright MCP server listening on ${running.url}\n`);
+  // terminates launched applications
+  const stop = () => void running.close().then(() => process.exit(0));
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
+}
+
 const [command, ...rest] = process.argv.slice(2);
-const commands: Record<string, (argv: string[]) => Promise<void>> = { codegen, inspect, server };
+const commands: Record<string, (argv: string[]) => Promise<void>> = { codegen, inspect, server, mcp };
 if (commands[command]) {
   commands[command](rest).catch((e) => {
     process.stderr.write(`${(e as Error).message}\n`);

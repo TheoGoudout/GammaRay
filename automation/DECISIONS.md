@@ -322,3 +322,34 @@ option preferred. Newest entries go at the bottom.
   Application output arrives as `qtpw.output` notifications, so `app.output()` works.
 - (a) remains as `connect()` / `qtApp.connect` for devices without Node.js, where the
   application is started separately and shared by the tests.
+
+## D29. MCP server for AI agents
+
+- Goal: let an agent explore and test a running application live, also on a remote target,
+  like Playwright MCP does for browsers.
+- Options: (a) a new server inside the probe (C++, a second protocol in every injected
+  application); (b) a Node MCP server on top of the qt-playwright client.
+- **Chosen: (b), in the `qt-playwright` package** (`qt-playwright mcp`, `qt-playwright/mcp`).
+  The client already has everything the tools need: launch/connect/attach, remote launching
+  through `qt-playwright server` (D28), auto-waiting locators, retrying assertions, dialogs,
+  tracing, video and codegen's locator choice (`locatorFor`). The remote setups therefore
+  work unchanged, and the probe only gained an optional `refs` flag for `ariaSnapshot`.
+- **Snapshots and refs** follow Playwright MCP: the ARIA snapshot (D17) of all windows, with
+  `[ref=eN]` on each node. N is the element handle (D9), so a ref maps to the selector
+  `handle=N` and gets auto-waiting for free. Handles are never reused, so a ref to a
+  destroyed element fails clearly instead of hitting another element.
+- **Targets** are refs or locator expressions as written in tests. The inspector evaluated
+  those with `new Function`, acceptable for a local page with a token, but not for input
+  from an agent or a network client. `parseLocator()` parses them instead (literals and
+  locator methods only), and the inspector now uses it too.
+- **Results** carry the qt-playwright code of each action, a snapshot once the UI has
+  settled (two equal snapshots 100 ms apart, at most 1 s), and new application output.
+  The code of actions and passing `qt_expect` assertions accumulates into
+  `qt_generate_test`; refs become the locators codegen would choose.
+- **SDK:** the official `@modelcontextprotocol/sdk` (stdio and Streamable HTTP) rather than a
+  hand-written protocol implementation. It is a sizeable dependency (express, hono),
+  but protocol negotiation and HTTP sessions are easy to get subtly wrong. It is loaded
+  only by `qt-playwright/mcp`, never by tests.
+- **One application per server**, shared by all MCP sessions of an HTTP server, so a
+  reconnecting agent finds its application again. Files are written below `--output-dir`
+  only. HTTP checks Host/Origin on loopback and requires a bearer token elsewhere.

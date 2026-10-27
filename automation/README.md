@@ -2,7 +2,9 @@
 
 `qt-playwright` drives Qt applications (QtWidgets and Qt Quick/QML) from TypeScript tests
 in the style of [Playwright](https://playwright.dev): lazy locators, auto-waiting
-actions, retrying assertions and `@playwright/test` fixtures. Under the hood it uses
+actions, retrying assertions and `@playwright/test` fixtures. Its MCP server lets AI
+agents explore and test an application live, also on a remote device
+([below](#ai-agents-the-mcp-server)). Under the hood it uses
 **GammaRay**: the GammaRay launcher injects the probe into the application, and a new
 probe plugin (`gammaray_automation`) serves a JSON-RPC API over WebSocket from inside
 the process.
@@ -27,7 +29,7 @@ the process.
 | Path | What |
 |------|------|
 | `plugins/automation/` | probe plugin (C++, built with GammaRay when Qt WebSockets is available) |
-| `automation/client/` | the `qt-playwright` npm package (TypeScript) |
+| `automation/client/` | the `qt-playwright` npm package (TypeScript), including the MCP server |
 | `automation/examples/sampleapp/` | sample app with a Widgets and a QML window (login form, list, dialog...) |
 | `automation/examples/tests/` | example suite exercising every API feature |
 | `automation/run-e2e.sh` | builds everything and runs the suite headless |
@@ -533,6 +535,101 @@ is how the recorder itself is tested: the generated code is replayed on a fresh
 instance. `app.pause()` stops a test until you press Enter, so you can inspect the
 running app, for example with the GammaRay client (`gammaray --connect`).
 
+## AI agents: the MCP server
+
+`qt-playwright mcp` is an [MCP](https://modelcontextprotocol.io) server, the Qt
+counterpart of [Playwright MCP](https://github.com/microsoft/playwright-mcp). An AI agent
+(Claude Code, Claude Desktop, VS Code, Cursor...) uses it to look at a running application,
+operate it like a user, check its state while doing so, and turn the session into a
+test. The application can run on the same machine or on another one.
+
+Register it with your agent. The client is not on npm yet, so point the agent at the CLI
+of your checkout (after `npm ci` in `automation/client`):
+
+```sh
+claude mcp add qt -- node /path/to/GammaRay/automation/client/dist/cli.js mcp --app /path/to/myapp
+```
+
+```json
+{
+  "mcpServers": {
+    "qt": {
+      "command": "node",
+      "args": ["/path/to/GammaRay/automation/client/dist/cli.js", "mcp", "--app", "/path/to/myapp"],
+      "env": { "QT_PLAYWRIGHT_GAMMARAY": "/path/to/GammaRay/build/bin/gammaray" }
+    }
+  }
+}
+```
+
+With `--app`, the first tool call that needs the application starts it. Only the listed
+executables can be launched (`--args "..."` passes arguments). Without `--app`, the agent
+starts any executable with `qt_launch`. The agent reads **snapshots**: the accessibility
+tree of all windows, in which every element carries a ref:
+
+```yaml
+- generic "Widgets Demo" [ref=e1]:
+  - group "Login" [ref=e2]:
+    - textbox "User:" [ref=e3]: admin
+    - textbox "Password:" [ref=e4]
+    - button "Login" [disabled] [ref=e6]
+```
+
+Tools take a `ref` (`"e3"`) or a locator expression as written in tests
+(`"getByRole('button', { name: 'Login' })"`, `"locator('#loginBox').getByLabel('User:')"`,
+or a selector such as `"#okButton"`). Expressions are parsed, not evaluated: only the
+locator methods and literals are accepted. Actions auto-wait as in tests. The result of
+each action contains the qt-playwright code that does it, a fresh snapshot taken once
+the UI has settled (`--no-snapshot` turns this off), and new application output (stdout
+and stderr, so `qDebug()` messages appear too).
+
+| Tools | |
+|-|-|
+| `qt_launch`, `qt_connect`, `qt_attach`, `qt_close`, `qt_status` | start (also on another machine), connect to an automation port, inject into a pid, close, show windows and output |
+| `qt_snapshot`, `qt_screenshot`, `qt_find`, `qt_inspect` | observe: snapshot with refs, image of all windows or one element, try a locator, details, Qt properties and the suggested locator of an element |
+| `qt_click`, `qt_hover`, `qt_type`, `qt_press_key`, `qt_select_option`, `qt_check`, `qt_drag`, `qt_scroll`, `qt_mouse_click_xy`, `qt_handle_dialog`, `qt_file_upload` | act, with real input |
+| `qt_set_property`, `qt_invoke_method`, `qt_evaluate` | Qt properties, slots and `Q_INVOKABLE`s, JavaScript in the application |
+| `qt_wait_for`, `qt_expect`, `qt_spy_signal`, `qt_signal_emissions` | live testing: wait for text or state, any retrying assertion (`toHaveText`, `toBeChecked`, `toHaveProperty`, ...), record signal emissions |
+| `qt_generate_test`, `qt_start_tracing`/`qt_stop_tracing`, `qt_start_video`/`qt_stop_video`, `qt_highlight` | the session's actions and passing assertions as a test file, a Playwright trace, a video, a highlight for a watching human |
+
+A generated test (`qt_generate_test`) runs with the `app` fixture as it is:
+
+```ts
+test('login', async ({ app }) => {
+  await app.getByRole('textbox', { name: 'User:' }).fill('admin');
+  await app.getByLabel('Password:').fill('secret');
+  await app.getByRole('button', { name: 'Login' }).click();
+  await expect(app.locator('#statusLabel')).toHaveText('Welcome, admin!');
+});
+```
+
+Screenshots, traces, videos and test files go to `--output-dir` (default: a temporary
+directory), and paths given by the agent must stay inside it.
+
+**Remote targets.** All three setups from
+[Remote machines and devices](#remote-machines-and-devices) work:
+
+```sh
+# 1. the device runs `qt-playwright server`: a fresh application for every qt_launch
+ssh -L 9900:127.0.0.1:9900 user@device
+node cli.js mcp --remote ws://localhost:9900 --remote-token s3cret --app /opt/myapp/bin/myapp
+# 2. a device without Node.js, the application started with GAMMARAY_AUTOMATION_PORT=9910
+node cli.js mcp --connect device:9910
+# 3. the MCP server runs on the device itself, the agent connects over HTTP
+QTPW_MCP_TOKEN=s3cret node cli.js mcp --port 8931 --host 0.0.0.0 --app /opt/myapp/bin/myapp
+#    agent: url http://device:8931/mcp, header "Authorization: Bearer s3cret"
+```
+
+The HTTP transport (`--port`) listens on 127.0.0.1 unless `--host` says otherwise. It
+then rejects requests whose `Host` or `Origin` is not local (DNS rebinding). With a
+non-loopback `--host` it requires a token: `--token`, `$QTPW_MCP_TOKEN`, or a random one
+it prints. All MCP sessions of a server share one application. Anyone who can use the
+server controls the application, can launch the allowed executables, and runs
+JavaScript in it, so keep it local, tunnelled or token-protected.
+
+`createMcpServer()` and `runMcpServer()` from `qt-playwright/mcp` embed the server in
+your own Node program.
+
 ## Video recording
 
 All visible top-level windows of the application are recorded into one video. Windows
@@ -593,7 +690,8 @@ Methods: `hello`, `query {selector, scope?, describe?}`, `windows`, `describe`,
 `screenshot`, `waitForSignal`, `spy`, `spyEvents`, `unspy`, `subscribe`,
 `startRecording`, `stopRecording`, `evaluate`, `ariaSnapshot`, `screenshotAll`,
 `blur`, `tap`, `selectOption`, `mouseMove`, `mouseDown`, `mouseUp`, `mouseWheel`,
-`keyDown`, `keyUp`, `insertText`, `startCodegen`, `stopCodegen`. Notifications:
+`keyDown`, `keyUp`, `insertText`, `startCodegen`, `stopCodegen`. `ariaSnapshot {refs: true}`
+adds each node's handle (the refs of the MCP server's snapshots). Notifications:
 `objectsCreated {elements}`, `objectsDestroyed {handles}`, `codegenAction`. Video
 frames are binary messages: `"QTPW"`, a format
 byte, 3 bytes of padding, uint32 recording id, float64 milliseconds, then the JPEG/PNG

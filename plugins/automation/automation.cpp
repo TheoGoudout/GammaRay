@@ -1215,10 +1215,12 @@ void AutomationServer::registerHandlers()
 
 // --- accessibility snapshot ----------------------------------------------------------
 
-QJsonObject AutomationServer::accessibilityNode(QObject *obj, int depth)
+QJsonObject AutomationServer::accessibilityNode(QObject *obj, int depth, bool refs)
 {
     const auto acc = Element::accessible(obj);
     QJsonObject node { { QStringLiteral("role"), acc.role }, { QStringLiteral("name"), acc.name } };
+    if (refs) // element handles, e.g. for the refs of the MCP server's snapshots
+        node.insert(QStringLiteral("handle"), double(m_handles.handleFor(obj)));
     QString value = acc.value;
     if (acc.role == QLatin1String("textbox") && value.isEmpty())
         value = Element::text(obj);
@@ -1244,7 +1246,7 @@ QJsonObject AutomationServer::accessibilityNode(QObject *obj, int depth)
             const auto childAcc = Element::accessible(child);
             if (childAcc.invisible || (Element::hasGeometry(child) && !Element::isVisible(child)))
                 continue;
-            const QJsonObject childNode = accessibilityNode(child, depth + 1);
+            const QJsonObject childNode = accessibilityNode(child, depth + 1, refs);
             // unnamed generic containers add no information: inline their children
             if (childNode.value(QStringLiteral("role")).toString() == QLatin1String("generic")
                 && childNode.value(QStringLiteral("name")).toString().isEmpty()) {
@@ -1484,15 +1486,16 @@ void AutomationServer::registerExtendedHandlers()
 
     h[QStringLiteral("ariaSnapshot")] = [this](QWebSocket *, const QJsonObject &params, const ReplyPtr &reply) {
         QJsonArray roots;
+        const bool refs = params.value(QStringLiteral("refs")).toBool();
         if (params.contains(QStringLiteral("handle"))) {
             QObject *obj = resolve(params, reply);
             if (!obj)
                 return;
-            roots.push_back(accessibilityNode(obj, 0));
+            roots.push_back(accessibilityNode(obj, 0, refs));
         } else {
             const auto windows = Element::topLevelWindows();
             for (QObject *w : windows)
-                roots.push_back(accessibilityNode(w, 0));
+                roots.push_back(accessibilityNode(w, 0, refs));
         }
         reply->ok(QJsonObject { { QStringLiteral("nodes"), roots } });
     };

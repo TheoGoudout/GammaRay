@@ -20,7 +20,27 @@ export interface AriaNode {
   selected?: boolean;
   pressed?: boolean;
   level?: number;
+  /** The element's handle (with `refs: true` in the ariaSnapshot request). */
+  handle?: number;
   children?: AriaNode[];
+}
+
+export interface RenderAriaOptions {
+  /** Append `[ref=e<handle>]` to every node that has a handle (MCP snapshots). */
+  refs?: boolean;
+  /** Render at most this many children per node (default: all); the rest becomes a comment. */
+  maxChildren?: number;
+  /** Text of that comment, e.g. how to see the rest (default "... and N more"). */
+  omitted?: (parent: AriaNode, count: number) => string;
+}
+
+/** The ref of element @p handle in snapshots with refs. */
+export const refForHandle = (handle: number) => `e${handle}`;
+
+/** The handle of a snapshot ref (`e42`, also `42` and `[ref=e42]`), or undefined. */
+export function handleForRef(ref: string): number | undefined {
+  const m = /^\s*(?:\[?ref=)?e?(\d+)\]?\s*$/.exec(ref);
+  return m ? Number(m[1]) : undefined;
 }
 
 function yamlString(s: string): string {
@@ -28,7 +48,7 @@ function yamlString(s: string): string {
   return /^[\w .,!?'()/+-]*$/.test(s) && !/^\s|\s$/.test(s) && s !== '' ? s : JSON.stringify(s);
 }
 
-function attributes(n: AriaNode): string {
+function attributes(n: AriaNode, options: RenderAriaOptions): string {
   const attrs: string[] = [];
   if (n.checked) attrs.push('checked');
   if (n.disabled) attrs.push('disabled');
@@ -36,30 +56,34 @@ function attributes(n: AriaNode): string {
   if (n.level) attrs.push(`level=${n.level}`);
   if (n.pressed) attrs.push('pressed');
   if (n.selected) attrs.push('selected');
+  if (options.refs && n.handle !== undefined) attrs.push(`ref=${refForHandle(n.handle)}`);
   return attrs.map((a) => ` [${a}]`).join('');
 }
 
-function renderNode(n: AriaNode, indent: string, out: string[]): void {
+function renderNode(n: AriaNode, indent: string, out: string[], options: RenderAriaOptions): void {
   const children = n.children ?? [];
-  if (n.role === 'text') {
+  if (n.role === 'text' && !(options.refs && n.handle !== undefined)) {
     out.push(`${indent}- text: ${yamlString(n.name)}`);
     return;
   }
   let line = `${indent}- ${n.role}`;
   if (n.name) line += ` ${JSON.stringify(n.name)}`;
-  line += attributes(n);
+  line += attributes(n, options);
   if (children.length) {
     out.push(`${line}:`);
     if (n.value) out.push(`${indent}  - /value: ${yamlString(n.value)}`);
-    for (const c of children) renderNode(c, indent + '  ', out);
+    const shown = options.maxChildren !== undefined && children.length > options.maxChildren ? options.maxChildren : children.length;
+    for (const c of children.slice(0, shown)) renderNode(c, indent + '  ', out, options);
+    if (shown < children.length)
+      out.push(`${indent}  # ${options.omitted?.(n, children.length - shown) ?? `... and ${children.length - shown} more`}`);
   } else {
     out.push(n.value ? `${line}: ${yamlString(n.value)}` : line);
   }
 }
 
-export function renderAriaSnapshot(nodes: AriaNode[]): string {
+export function renderAriaSnapshot(nodes: AriaNode[], options: RenderAriaOptions = {}): string {
   const out: string[] = [];
-  for (const n of nodes) renderNode(n, '', out);
+  for (const n of nodes) renderNode(n, '', out, options);
   return out.join('\n');
 }
 

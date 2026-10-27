@@ -5,7 +5,11 @@
 // Run with: npm test (after npm run build)
 
 import assert from 'node:assert/strict';
+import {mkdtempSync,
+        rmSync} from 'node:fs';
 import {createRequire} from 'node:module';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {test} from 'node:test';
 import {WebSocketServer} from 'ws';
 
@@ -101,4 +105,189 @@ test('aria snapshots: rendering and partial template matching', () => {
   `,
                                    tree)); // wrong order
     assert.ok(!matchesAriaTemplate('- checkbox "Remember me" [checked=false]', tree));
+});
+
+test('aria snapshots with refs', () => {
+    const {renderAriaSnapshot, handleForRef} = require('../dist/aria.js');
+    const tree = [ {
+        role : 'window',
+        name : 'Main',
+        handle : 3,
+        children : [ {role : 'button', name : 'OK', handle : 12, disabled : true}, {role : 'text', name : 'Hi', handle : 13} ],
+    } ];
+    assert.equal(renderAriaSnapshot(tree, {refs : true}), [
+        '- window "Main" [ref=e3]:',
+        '  - button "OK" [disabled] [ref=e12]',
+        '  - text "Hi" [ref=e13]',
+    ].join('\n'));
+    // without refs, handles are ignored
+    assert.equal(renderAriaSnapshot(tree), '- window "Main":\n  - button "OK" [disabled]\n  - text: Hi');
+    // long lists are shortened
+    const list = [ {role : 'list', handle : 5, children : [ 1, 2, 3, 4 ].map((i) => ({role : 'listitem', name : `Row ${i}`, handle : 10 + i}))} ];
+    assert.equal(renderAriaSnapshot(list, {refs : true, maxChildren : 2, omitted : (p, n) => `${n} more in e${p.handle}`}),
+                 '- list [ref=e5]:\n  - listitem "Row 1" [ref=e11]\n  - listitem "Row 2" [ref=e12]\n  # 2 more in e5');
+    assert.equal(renderAriaSnapshot(list, {maxChildren : 3}).split('\n').pop(), '  # ... and 1 more');
+    assert.equal(handleForRef('e12'), 12);
+    assert.equal(handleForRef('[ref=e12]'), 12);
+    assert.equal(handleForRef('12'), 12);
+    assert.equal(handleForRef('button'), undefined);
+});
+
+test('locator expressions are parsed without evaluating code', () => {
+    const {QtApp, parseLocator, isLocatorExpression, LocatorExpressionError} = require('../dist/index.js');
+    const app = new QtApp({}, {appName : 'test'});
+    const parse = (text) => parseLocator(app, text);
+
+    assert.equal(parse("getByRole('button', { name: 'Login' })").selector, 'role=button[name="Login"i]');
+    assert.equal(parse("app.getByRole('button', { name: 'Login', exact: true })").expression,
+                 "getByRole('button', { name: 'Login', exact: true })");
+    assert.equal(parse('getByText(/sa.e/i).first()').selector, 'text=/sa.e/i >> nth=0');
+    assert.equal(parse(`locator("#box").getByLabel('User:').nth(-1)`).selector, '#box >> label="User:"i >> nth=-1');
+    assert.equal(parse("getByRole('listitem').filter({ has: getByText('Done'), visible: true })").selector,
+                 'role=listitem >> has="text=\\"Done\\"i" >> visible=true');
+    assert.equal(parse("getByRole('checkbox', { checked: false, 'level': 2 })").selector, 'role=checkbox[checked=false][level=2]');
+    assert.equal(parse("getByText('it\\'s \\u00e9')").selector, `text="it's é"i`);
+    assert.equal(parse('getByRole(`row`).or(getByRole("cell"))').selector, 'role=row >> or="role=cell"');
+    // selectors
+    assert.equal(parse('#okButton').selector, '#okButton');
+    assert.equal(parse('QPushButton[text="OK (1)"]').selector, 'QPushButton[text="OK (1)"]');
+    assert.ok(!isLocatorExpression('text="Save (draft)"'));
+    // only locator-building methods and literals
+    for (const bad of ["getByRole('button').click()", "constructor('x')", "getByRole(process.exit(1))", "getByText('a' + 'b')",
+                       'getByText(`${x}`)', "getByRole('button'", "getByRole('button')) ; x()", "first()", "getByRole('x').describe()"])
+        assert.throws(() => parse(bad), LocatorExpressionError, bad);
+});
+
+/**
+ * A minimal fake automation server: one window with a button that changes the label when clicked.
+ */
+async function fakeApp() {
+    let clicked = false;
+    const tree = () => [{
+        role : 'window',
+        name : 'Fake',
+        handle : 1,
+        children : [ {role : 'button', name : 'Go', handle : 2}, {role : 'text', name : clicked ? 'Done' : 'Idle', handle : 3} ],
+    }];
+    const geometry = {x : 10, y : 10, width : 80, height : 30};
+    const handlers = {
+        hello : () => ({protocolVersion : 1, pid : 4242, appName : 'fake', qtVersion : '6.8.3', platform : 'offscreen'}),
+        ariaSnapshot : (p) => ({nodes : p.refs ? tree() : JSON.parse(JSON.stringify(tree(), (k, v) => (k === 'handle' ? undefined : v)))}),
+        sync : () => ({}),
+        windows : () => ({elements : [ {handle : 1, type : 'QWidget', text : 'Fake'} ]}),
+        locatorFor : (p) => {
+            if (p.handle !== 2)
+                throw {code : 1001, message : `element ${p.handle} no longer exists`};
+            return {code : "app.getByRole('button', { name: 'Go' })", selector : 'role=button[name="Go"]'};
+        },
+        query : (p) => ({elements : p.selector === 'handle=2' || p.selector.startsWith('role=button') ? [ {handle : 2, type : 'QPushButton'} ] : []}),
+        scrollIntoView : () => ({scrolled : false}),
+        actionability : () => ({attached : true, visible : true, enabled : true, editable : -1, hasGeometry : true, geometry}),
+        click : () => {
+            clicked = true;
+            return {};
+        },
+    };
+    const server = new WebSocketServer({port : 0, host : '127.0.0.1'});
+    await new Promise((r) => server.once('listening', r));
+    server.on('connection', (ws) => ws.on('message', (data) => {
+        const req = JSON.parse(data.toString());
+        try {
+            const handler = handlers[req.method];
+            if (!handler)
+                throw {code : -32601, message : `unknown method ${req.method}`};
+            ws.send(JSON.stringify({jsonrpc : '2.0', id : req.id, result : handler(req.params ?? {})}));
+        } catch (e) {
+            ws.send(JSON.stringify({jsonrpc : '2.0', id : req.id, error : e}));
+        }
+    }));
+    return {server, target : `127.0.0.1:${server.address().port}`};
+}
+
+async function mcpClient(options) {
+    const {Client} = require('@modelcontextprotocol/sdk/client/index.js');
+    const {InMemoryTransport} = require('@modelcontextprotocol/sdk/inMemory.js');
+    const {createMcpServer, McpContext} = require('../dist/mcp.js');
+    const context = new McpContext(options);
+    const server = createMcpServer(context);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({name : 'test', version : '1.0.0'});
+    await client.connect(clientTransport);
+    const call = async (name, args = {}) => {
+        const r = await client.callTool({name, arguments : args});
+        return {...r, text : r.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n')};
+    };
+    return {client, context, call};
+}
+
+test('MCP server: tools, and errors without an application', async () => {
+    const {client, context, call} = await mcpClient({apps : [ '/opt/app/bin/app' ]});
+    const {tools} = await client.listTools();
+    const names = tools.map((t) => t.name);
+    for (const name of ['qt_launch', 'qt_connect', 'qt_snapshot', 'qt_click', 'qt_type', 'qt_expect', 'qt_screenshot', 'qt_generate_test'])
+        assert.ok(names.includes(name), name);
+    assert.ok(tools.find((t) => t.name === 'qt_snapshot').annotations.readOnlyHint);
+
+    const refused = await call('qt_launch', {executable : '/usr/bin/xterm'});
+    assert.ok(refused.isError);
+    assert.match(refused.text, /only launches \/opt\/app\/bin\/app/);
+
+    const {call : call2, context : context2} = await mcpClient({});
+    const none = await call2('qt_snapshot');
+    assert.ok(none.isError);
+    assert.match(none.text, /No application is connected.*qt_launch/);
+    assert.match((await call2('qt_click', {locator : "getByRole('button').click()"})).text, /No application/);
+    await client.close();
+    await context.close();
+    await context2.close();
+});
+
+test('MCP server: snapshot refs, actions and generated code against an automation server', async () => {
+    const {server, target} = await fakeApp();
+    const outputDir = mkdtempSync(join(tmpdir(), 'qtpw-mcp-test-'));
+    const {call, context} = await mcpClient({timeout : 2000, outputDir});
+    try {
+        assert.match((await call('qt_connect', {target})).text, /fake \(pid 4242, Qt 6\.8\.3.*connected to/s);
+        const snapshot = await call('qt_snapshot');
+        assert.match(snapshot.text, /- button "Go" \[ref=e2\]/);
+        assert.match(snapshot.text, /- text "Idle" \[ref=e3\]/);
+
+        const clicked = await call('qt_click', {element : 'Go button', ref : 'e2'});
+        assert.ok(!clicked.isError, clicked.text);
+        assert.match(clicked.text, /await app\.getByRole\('button', \{ name: 'Go' \}\)\.click\(\);/);
+        assert.match(clicked.text, /- text "Done" \[ref=e3\]/); // fresh snapshot after the action
+
+        // nothing changed: the snapshot is not repeated
+        assert.match((await call('qt_click', {ref : 'e2'})).text, /### Snapshot\nunchanged/);
+        // a ref whose element is gone, and a ref that is not one
+        assert.match((await call('qt_click', {ref : 'e99'})).text, /no longer exists.*qt_snapshot/s);
+        assert.match((await call('qt_click', {ref : 'Go'})).text, /is not a ref/);
+        // locators instead of refs
+        const byLocator = await call('qt_find', {locator : "getByRole('button', { name: 'Go' })"});
+        assert.match(byLocator.text, /matches 1 element/);
+
+        const generated = await call('qt_generate_test', {name : 'go', path : 'go.spec.ts'});
+        assert.match(generated.text, /test\('go', async \(\{ app \}\) => \{\n(  await app\.getByRole\('button', \{ name: 'Go' \}\)\.click\(\);\n){2}\}\);/);
+        assert.match(generated.text, /Saved to .*go\.spec\.ts/);
+        assert.match(generated.text, /use: \{ qtApp: \{ connect: '127\.0\.0\.1:\d+' \} \}/);
+        // files stay in the output directory
+        assert.match((await call('qt_generate_test', {path : '../../etc/x.spec.ts'})).text, /below the output directory/);
+    } finally {
+        await context.close();
+        server.close();
+        rmSync(outputDir, {recursive : true, force : true});
+    }
+});
+
+test('MCP helpers: code literals and new output', () => {
+    const {codeLiteral, newOutput} = require('../dist/mcp.js');
+    assert.equal(codeLiteral({button : 'right', modifiers : [ 'Shift' ], 'a-b' : /x/i}), "{ button: 'right', modifiers: ['Shift'], 'a-b': /x/i }");
+    assert.equal(codeLiteral("it's\n"), "'it\\'s\\n'");
+    assert.equal(newOutput('', 'a\n'), 'a\n');
+    assert.equal(newOutput('a\n', 'a\nb\n'), 'b\n');
+    // the bounded output buffer dropped its beginning
+    assert.equal(newOutput('a'.repeat(300) + 'TAIL', 'a'.repeat(250) + 'TAIL' +
+                                                         'new'),
+                 'new');
 });
